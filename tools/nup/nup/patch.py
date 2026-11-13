@@ -63,6 +63,15 @@ def _collect_mod_tree(root: Path) -> dict[str, Path]:
     for p in root.rglob("*"):
         if not p.is_file() or p.is_symlink():
             continue
+        cur = p
+        has_symlink_ancestor = False
+        while cur != root and cur != cur.parent:
+            if cur.is_symlink() or (hasattr(os.path, "isjunction") and os.path.isjunction(cur)):
+                has_symlink_ancestor = True
+                break
+            cur = cur.parent
+        if has_symlink_ancestor:
+            continue
         if p.name.lower() in _EXCLUDE_FILENAMES:
             continue
         rel = p.relative_to(root).as_posix()

@@ -104,35 +104,53 @@ def ncz_to_nca(
                          blob[40:56]))
         pos += 56
 
+    # Validate section boundaries and non-overlapping ranges
+    sorted_sections = sorted((s_offset, s_size, s_crypto, k, c) for s_offset, s_size, s_crypto, k, c in sections)
+    for i in range(len(sorted_sections)):
+        s_off, s_sz = sorted_sections[i][0], sorted_sections[i][1]
+        if s_off + s_sz > (128 << 30):
+            raise UnpackError(f"implausible NCZ section range [{s_off}:{s_off + s_sz}]")
+        if i + 1 < len(sorted_sections):
+            next_off = sorted_sections[i + 1][0]
+            if s_off + s_sz > next_off:
+                raise UnpackError(
+                    f"overlapping NCZ sections: [{s_off}:{s_off + s_sz}] overlaps with next at {next_off}"
+                )
+
     body_off = nca_off + pos
     body_magic = read_at(body_off, 8)
     body_start = pos + (8 if body_magic == _BLOCK_MAGIC else 0)
 
     written = 0
-    with open(dest, "wb") as out:
-        out.write(header)
-        written = _HEADER
-        try:
-            if body_magic == _BLOCK_MAGIC:
-                written += _decompress_blocks(
-                    read_at, nca_off + body_start, out,
-                    on_progress=on_progress, check=check)
-            else:
-                written += _decompress_solid(
-                    read_at, nca_off + body_start,
-                    on_progress=on_progress, check=check, out=out)
-        except zstandard.ZstdError as exc:
-            raise UnpackError(f"NCZ zstd decode failed: {exc}") from exc
-        # Re-encrypt CTR/BKTR sections in place.
-        for s_offset, s_size, s_crypto, key, counter in sections:
-            if s_crypto not in (3, 4):
-                continue
-            start = max(s_offset, _HEADER)
-            end = min(s_offset + s_size, written)
-            if end <= start:
-                continue
-            _encrypt_range(dest, start, end, key, counter,
-                           on_progress=on_progress, check=check)
+    try:
+        with open(dest, "wb") as out:
+            out.write(header)
+            written = _HEADER
+            try:
+                if body_magic == _BLOCK_MAGIC:
+                    written += _decompress_blocks(
+                        read_at, nca_off + body_start, out,
+                        on_progress=on_progress, check=check)
+                else:
+                    written += _decompress_solid(
+                        read_at, nca_off + body_start,
+                        on_progress=on_progress, check=check, out=out)
+            except zstandard.ZstdError as exc:
+                raise UnpackError(f"NCZ zstd decode failed: {exc}") from exc
+            # Re-encrypt CTR/BKTR sections in place.
+            for s_offset, s_size, s_crypto, key, counter in sections:
+                if s_crypto not in (3, 4):
+                    continue
+                start = max(s_offset, _HEADER)
+                end = min(s_offset + s_size, written)
+                if end <= start:
+                    continue
+                _encrypt_range(dest, start, end, key, counter,
+                               on_progress=on_progress, check=check)
+    except BaseException:
+        if dest.is_file():
+            dest.unlink(missing_ok=True)
+        raise
     return written
 
 
@@ -143,20 +161,26 @@ def _decompress_solid(
     out: io.BufferedWriter,
     on_progress: Callable[[int], None] | None,
     check: Callable[[], None],
+    max_size: int = 128 << 30,
 ) -> int:
     src = _RangeReader(read_at, body_off, body_off + (1 << 62))
     dctx = zstandard.ZstdDecompressor()
     reader = dctx.stream_reader(cast(IO[bytes], src))
     total = 0
-    while True:
-        check()
-        data = reader.read(_CHUNK)
-        if not data:
-            break
-        out.write(data)
-        total += len(data)
-        if on_progress is not None:
-            on_progress(len(data))
+    try:
+        while True:
+            check()
+            data = reader.read(_CHUNK)
+            if not data:
+                break
+            out.write(data)
+            total += len(data)
+            if total > max_size:
+                raise UnpackError(f"solid NCZ stream exceeds maximum allowed size ({total} > {max_size})")
+            if on_progress is not None:
+                on_progress(len(data))
+    finally:
+        reader.close()  # type: ignore[no-untyped-call]
     return total
 
 
@@ -175,10 +199,18 @@ def _decompress_blocks(
     block_size_exp = meta[3]
     block_count = int.from_bytes(meta[4:8], "little", signed=True)
     decompressed_size = int.from_bytes(meta[8:16], "little", signed=True)
-    if not 0 < block_count <= 1 << 24 or not 0 <= block_size_exp <= 40:
+    if not 0 < block_count <= 1 << 24 or not 0 <= block_size_exp <= 26:
         raise UnpackError("implausible NCZBLOCK header")
     if decompressed_size < 0 or decompressed_size > (128 << 30):
         raise UnpackError(f"implausible NCZBLOCK decompressed size {decompressed_size}")
+    block_size = 1 << block_size_exp
+    min_expected = (block_count - 1) * block_size + 1
+    max_expected = block_count * block_size
+    if not (min_expected <= decompressed_size <= max_expected):
+        raise UnpackError(
+            f"NCZBLOCK block_count {block_count} (block_size {block_size}) "
+            f"inconsistent with decompressed_size {decompressed_size}"
+        )
     sizes_blob = read_at(body_off + 16, block_count * 4)
     if len(sizes_blob) != block_count * 4:
         raise UnpackError("NCZBLOCK size table truncated")
@@ -186,14 +218,15 @@ def _decompress_blocks(
                             signed=True)
              for i in range(block_count)]
     src_pos = body_off + 16 + block_count * 4
-    block_size = 1 << block_size_exp
     remaining = decompressed_size
     dctx = zstandard.ZstdDecompressor()
     for bs in sizes:
         check()
-        if bs < 0:
-            raise UnpackError("negative NCZBLOCK block size")
+        if bs < 0 or bs > block_size * 2 + 4096:
+            raise UnpackError(f"implausible NCZBLOCK block size {bs}")
         out_size = min(block_size, remaining)
+        if out_size > (64 << 20):
+            raise UnpackError(f"excessive NCZBLOCK frame size {out_size}")
         comp = read_at(src_pos, bs)
         if len(comp) != bs:
             raise UnpackError("NCZBLOCK data truncated")

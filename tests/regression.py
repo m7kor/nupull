@@ -1041,6 +1041,73 @@ with NupReader(direct_aio_nup) as r:
     except F.NupError:
         check(True, "edit package resolution out-of-range raises NupError")
 
+# ---------- R20: Phase II Bounded-Memory, Decompression & Path Hardening ----------
+# 1. BoundedMmapReader sequential chunks and strict boundaries
+from nup.read import BoundedMmapReader
+bmr_buf = b"0123456789abcdef"
+bmr = BoundedMmapReader(bmr_buf, 4, 8, chunk_size=3)
+check(bmr.read(3) == b"456", "bmr read chunk 1")
+check(bmr.read(3) == b"789", "bmr read chunk 2")
+check(bmr.read(3) == b"ab", "bmr read final partial chunk")
+check(bmr.read(3) == b"", "bmr read past end is empty")
+try:
+    BoundedMmapReader(bmr_buf, 10, 10)
+    check(False, "bmr rejects out-of-bounds start/length")
+except F.NupError:
+    check(True, "bmr rejects out-of-bounds start/length")
+
+# 2. extract_file_to cancellation and bounds check
+with NupReader(direct_aio_nup) as r:
+    try:
+        r.extract_file_to(0, io.BytesIO(), is_cancelled=lambda: True)
+        check(False, "extract_file_to cancellation raises NupError")
+    except F.NupError as e:
+        check("cancelled" in str(e).lower(), "extract_file_to cancellation raises NupError")
+
+# 3. Decompression safety: solid zstd decompression bomb ceiling
+from nup.switchfs.ncz import _decompress_solid
+import zstandard
+bomb_comp = zstandard.ZstdCompressor().compress(b"0" * 20000)
+try:
+    _decompress_solid(lambda off, sz: bomb_comp[off:off+sz], 0,
+                      out=io.BufferedWriter(io.BytesIO()), on_progress=None, check=lambda: None, max_size=1000)
+    check(False, "solid NCZ stream exceeding max_size raises UnpackError")
+except UnpackError:
+    check(True, "solid NCZ stream exceeding max_size raises UnpackError")
+
+# 4. Decompression safety: overlapping NCZ sections rejected
+def _fake_overlap_ncz(off: int, sz: int) -> bytes:
+    if off == 0 and sz == 0x4000: return b"\x00" * 0x4000
+    if off == 0x4000 and sz == 8: return b"NCZSECTN"
+    if off == 0x4008 and sz == 8: return (2).to_bytes(8, "little")
+    if off == 0x4010 and sz == 56: return (0x4000).to_bytes(8, "little") + (0x1000).to_bytes(8, "little") + b"\x00" * 40
+    if off == 0x4048 and sz == 56: return (0x4800).to_bytes(8, "little") + (0x1000).to_bytes(8, "little") + b"\x00" * 40
+    return b""
+
+try:
+    ncz_to_nca(_fake_overlap_ncz, 0, Path(os.path.join(work, "overlap_dummy.nca")))
+    check(False, "overlapping NCZ sections rejected with UnpackError")
+except UnpackError:
+    check(True, "overlapping NCZ sections rejected with UnpackError")
+
+# 5. NCZBLOCK invalid block_size_exp (> 26) rejected
+invalid_exp_meta = b"\x01\x00\x00\x1f" + (1).to_bytes(4, "little") + (1000).to_bytes(8, "little")
+try:
+    _decompress_blocks(lambda off, sz: invalid_exp_meta, 0, io.BytesIO(), on_progress=None, check=lambda: None)
+    check(False, "NCZBLOCK with block_size_exp > 26 rejected")
+except UnpackError:
+    check(True, "NCZBLOCK with block_size_exp > 26 rejected")
+
+# 6. Unpack path resolution: _safe_resolve rejects leading slashes, colons, traversal
+from nup.switchfs.unpack import _safe_resolve
+fake_dest = Path(os.path.join(work, "safe_unpack_dest"))
+for evil_path in ["/etc/passwd", "\\windows\\system32", "../outside.txt", "C:/drive.txt", "name:stream"]:
+    try:
+        _safe_resolve(fake_dest, evil_path)
+        check(False, f"_safe_resolve rejects {evil_path}")
+    except UnpackError:
+        check(True, f"_safe_resolve rejects {evil_path}")
+
 # ---------- summary ----------
 print()
 if fails:

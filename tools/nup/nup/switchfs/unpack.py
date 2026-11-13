@@ -590,7 +590,9 @@ def _get_base_romfs_reader(
 
 def _safe_resolve(dest: Path, rel: str) -> Path:
     """Resolve `rel` relative to `dest`, guarding strictly against traversal."""
-    normalized = rel.replace("\\", "/").strip("/")
+    if not rel or rel.startswith(("/", "\\")) or ":" in rel:
+        raise UnpackError(f"unsafe file path in container: {rel!r}")
+    normalized = rel.replace("\\", "/")
     parts = normalized.split("/")
     if any(p in ("..", ".", "") or ":" in p for p in parts):
         raise UnpackError(f"unsafe file path in container: {rel!r}")

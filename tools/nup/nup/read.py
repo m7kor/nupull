@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import io
 import mmap
 import os
 import struct
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, Callable, IO, cast
 
 from . import format as F
 
@@ -56,6 +57,67 @@ class NodeRef:
     is_dir: bool
     index: int
     name: bytes
+
+
+class BoundedMmapReader(io.RawIOBase):
+    """Zero-copy bounded stream reader over an mmap or bytes buffer.
+
+    Streams chunks strictly within [start, start + length) without
+    slicing or copying the entire range into memory at once.
+    """
+
+    __slots__ = ("_buf", "_pos", "_start", "_end", "_chunk_size")
+
+    def __init__(
+        self,
+        buffer: mmap.mmap | bytes,
+        start: int,
+        length: int,
+        chunk_size: int = 65536,
+    ) -> None:
+        super().__init__()
+        if start < 0 or length < 0 or start + length > len(buffer):
+            raise F.NupError(
+                f"bounded region [{start}:{start + length}] exceeds buffer size {len(buffer)}"
+            )
+        self._buf = buffer
+        self._pos = start
+        self._start = start
+        self._end = start + length
+        self._chunk_size = chunk_size
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        if self._pos >= self._end:
+            return b""
+        to_read = self._end - self._pos
+        if size > 0:
+            to_read = min(to_read, size)
+        step = min(to_read, self._chunk_size)
+        chunk = self._buf[self._pos : self._pos + step]
+        self._pos += step
+        return bytes(chunk) if not isinstance(chunk, bytes) else chunk
+
+    def tell(self) -> int:
+        return self._pos - self._start
+
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        if whence == os.SEEK_SET:
+            new_pos = self._start + offset
+        elif whence == os.SEEK_CUR:
+            new_pos = self._pos + offset
+        elif whence == os.SEEK_END:
+            new_pos = self._end + offset
+        else:
+            raise ValueError(f"invalid whence {whence}")
+        if not (self._start <= new_pos <= self._end):
+            raise ValueError(
+                f"seek position {new_pos} out of bounds [{self._start}, {self._end}]"
+            )
+        self._pos = new_pos
+        return self._pos - self._start
 
 
 class NupReader:
@@ -264,42 +326,60 @@ class NupReader:
             raise F.NupError(f"size mismatch for {name!r}: {len(data)} != {size}")
         return data
 
-    def extract_file_to(self, file_index: int, out_fh: BinaryIO, chunk_size: int = 1024 * 1024) -> None:
+    def extract_file_to(
+        self,
+        file_index: int,
+        out_fh: BinaryIO,
+        chunk_size: int = 1024 * 1024,
+        is_cancelled: Callable[[], bool] | None = None,
+    ) -> None:
         """Stream an uncompressed or decompressed file directly into an open binary stream."""
         name, size, sha, eoff, esz, codec = self.files[file_index]
         if size == 0:
             return
+        if eoff < 0 or esz < 0 or eoff + esz > len(self._mm):
+            raise F.NupError(f"extent [{eoff}:{eoff + esz}] out of bounds for {name!r}")
+
         if codec == F.CODEC_RAW:
-            if eoff + esz > len(self._mm):
-                raise F.NupError(f"extent out of bounds for {name!r}")
+            if esz != size:
+                raise F.NupError(f"raw extent size mismatch for {name!r}: {esz} != {size}")
             cur = eoff
             end = eoff + esz
             written = 0
             while cur < end:
+                if is_cancelled and is_cancelled():
+                    raise F.NupError("extraction cancelled")
                 step = min(chunk_size, end - cur)
-                out_fh.write(self._mm[cur:cur + step])
+                out_fh.write(self._mm[cur : cur + step])
                 cur += step
                 written += step
             if written != size:
                 raise F.NupError(f"size mismatch for {name!r}: {written} != {size}")
         elif codec == F.CODEC_ZSTD:
-            import io
             import zstandard
-            comp = self._mm[eoff:eoff + esz]
-            if len(comp) != esz:
-                raise F.NupError(f"short read for {name!r}")
+
             dctx = zstandard.ZstdDecompressor()
-            reader = dctx.stream_reader(io.BytesIO(comp))
-            written = 0
-            while True:
-                chunk = reader.read(chunk_size)
-                if not chunk:
-                    break
-                written += len(chunk)
-                if written > size:
-                    raise F.NupError(f"decompressed data exceeds declared size for {name!r}")
-                out_fh.write(chunk)
-            if written != size:
-                raise F.NupError(f"size mismatch for {name!r}: {written} != {size}")
+            bmr = BoundedMmapReader(
+                self._mm, eoff, esz, chunk_size=min(chunk_size, 65536)
+            )
+            reader = dctx.stream_reader(cast(IO[bytes], bmr))
+            try:
+                written = 0
+                while True:
+                    if is_cancelled and is_cancelled():
+                        raise F.NupError("extraction cancelled")
+                    chunk = reader.read(chunk_size)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > size:
+                        raise F.NupError(
+                            f"decompressed data exceeds declared size for {name!r}"
+                        )
+                    out_fh.write(chunk)
+                if written != size:
+                    raise F.NupError(f"size mismatch for {name!r}: {written} != {size}")
+            finally:
+                reader.close()  # type: ignore[no-untyped-call]
         else:
             raise F.NupError(f"unknown codec {codec}")

@@ -1,6 +1,6 @@
 """nup - reference implementation of the NUP (NX Package) format."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.1"
 
 from .batch import batch_convert, BatchResult
 from .convert import convert
