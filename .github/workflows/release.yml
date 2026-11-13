@@ -30,7 +30,7 @@ jobs:
 
       - name: Build standalone executable with PyInstaller
         run: |
-          pyinstaller --noconsole --onefile --name "Nupull" --icon "assets/nupull.ico" nup_gui.py
+          pyinstaller --noconsole --onefile --name "Nupull" --icon "assets/nupull.ico" --paths "tools/nup" --collect-all nup nup_gui.py
 
       - name: Verify build artifact
         run: |
@@ -38,7 +38,7 @@ jobs:
 
       - name: Create release zip
         run: |
-          Compress-Archive -Path dist/Nupull.exe, README.md, LICENSE -DestinationPath Nupull-Windows-x64.zip
+          Compress-Archive -Path dist/Nupull.exe, README.md, LICENSE -DestinationPath Nupull-v1.0.0-windows-x64.zip
 
       - name: Upload artifact to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -46,6 +46,6 @@ jobs:
         with:
           files: |
             dist/Nupull.exe
-            Nupull-Windows-x64.zip
+            Nupull-v1.0.0-windows-x64.zip
           draft: false
           prerelease: false

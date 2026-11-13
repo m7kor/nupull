@@ -47,6 +47,11 @@ try:
 except ImportError as e:  # pragma: no cover
     sys.exit(f"PyQt6 is not installed ({e}) — run: py -3.12 -m pip install pyqt6")
 
+# Ensure local tools/nup is in sys.path when running from source or repo clone
+_tools_nup = Path(__file__).resolve().parent / "tools" / "nup"
+if _tools_nup.is_dir() and str(_tools_nup) not in sys.path:
+    sys.path.insert(0, str(_tools_nup))
+
 try:
     from nup import format as F
     from nup.access import app_meta, build_id, extract_tree, iter_children, \
