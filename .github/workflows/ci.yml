@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ "main", "master", "meow" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "main", "master", "meow" ]
+    branches: [ "main" ]
 
 jobs:
   test:
@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, windows-latest, macos-latest ]
-        python-version: [ "3.10", "3.11", "3.12", "3.13" ]
+        python-version: [ "3.12" ]
     env:
       PYTHONUTF8: "1"
 
@@ -42,7 +42,7 @@ jobs:
           python tests/regression.py
 
       - name: Smoke test installed GUI
-        if: matrix.os == 'windows-latest' && matrix.python-version == '3.12'
+        if: matrix.os == 'windows-latest'
         env:
           QT_QPA_PLATFORM: offscreen
         shell: pwsh

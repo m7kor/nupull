@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "nup"
 dynamic = ["version"]
 description = "Reference implementation of the NUP (NX Package) container format for Switch 1/2 game dumps"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 #readme = {file = "../../README.md", content-type = "text/markdown"}
 license = "MIT"
 license-files = ["../../LICENSE"]
@@ -19,8 +19,8 @@ dependencies = [
 version = {attr = "nup.__init__.__version__"}
 
 [project.urls]
-"Source" = "https://github.com/a55uka/nup"
-"Bug Tracker" = "https://github.com/a55uka/nup/issues"
+"Source" = "https://github.com/m7kor/nupull"
+"Bug Tracker" = "https://github.com/m7kor/nupull/issues"
 
 [project.scripts]
 nup = "nup.cli:main"
