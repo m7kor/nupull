@@ -42,6 +42,17 @@ def cli(args):
 work = tempfile.mkdtemp(prefix="nup_reg_")
 print("work:", work)
 
+# Use synthetic keys for synthetic inputs, including CLI subprocesses.
+real_keys_path = Keyset.discover()
+synthetic_keys = Path(work) / "synthetic.keys"
+synthetic_keys.write_text(
+    f"header_key = {bytes(range(32)).hex()}\n"
+    f"key_area_key_application_00 = {bytes(range(16, 32)).hex()}\n",
+    encoding="ascii",
+)
+synthetic_keys.with_name("title.keys").touch()
+os.environ["NUP_KEYS"] = str(synthetic_keys)
+
 
 def patch_pool(data, old, new):
     toc_off = struct.unpack_from("<Q", data, 8)[0]
@@ -580,10 +591,10 @@ check(os.path.isfile(os.path.join(synth_xci_out, "base", "exefs", "main.npdm")),
 ff7_dir = Path(r"C:\Users\KH\Downloads\Compressed\FINAL FANTASY RESONANCE [0100606026F12000][v0][Base]")
 ff7_upd = ff7_dir / "FINAL FANTASY RESONANCE [0100606026F12800][v65536][1.0.1][UPD].nsp"
 ff7_base = ff7_dir / "FINAL FANTASY RESONANCE [0100606026F12000][v0][Base].nsp"
-if ff7_upd.is_file() and ff7_base.is_file():
+if real_keys_path is not None and ff7_upd.is_file() and ff7_base.is_file():
     d_test_dir = Path(tempfile.mkdtemp(prefix="nup_reg_d_", dir="D:\\"))
     try:
-        unpack(ff7_upd, d_test_dir)
+        unpack(ff7_upd, d_test_dir, keys_path=real_keys_path)
         upd_romfs_files = list((d_test_dir / "updates" / "65536" / "romfs").rglob("*"))
         upd_romfs_files = [f for f in upd_romfs_files if f.is_file()]
         check(len(upd_romfs_files) == 14,
