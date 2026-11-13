@@ -74,10 +74,14 @@ class NupReader:
             if self.super["file_size"] != real_size:
                 raise F.NupError(
                     f"file_size {self.super['file_size']} != actual {real_size}")
-            if self.super["toc_offset"] < F.HEADER_SIZE:
-                raise F.NupError("toc_offset before header end")
+            if self.super["toc_offset"] != self.super["header_size"]:
+                raise F.NupError("toc_offset does not match header_size")
+            if self.super["package_count"] == 0:
+                raise F.NupError("package_count must be at least one")
             if self.super["blob_offset"] < self.super["toc_offset"] + self.super["toc_size"]:
                 raise F.NupError("blob region overlaps TOC")
+            if self.super["blob_offset"] > real_size:
+                raise F.NupError("blob_offset beyond end of file")
             if self.super["blob_offset"] % F.EXTENT_ALIGN:
                 raise F.NupError("blob_offset not 16-byte aligned")
 
@@ -114,6 +118,8 @@ class NupReader:
     # ---- TOC parsing ----
 
     def _parse_toc(self, toc: bytes) -> None:
+        if len(toc) < F._toc_head_s.size:
+            raise F.NupError("TOC header truncated")
         magic, pkg_count, dir_count, file_count, pool_off, pool_size, _r = \
             F._toc_head_s.unpack_from(toc, 0)
         if magic != F.TOC_MAGIC:

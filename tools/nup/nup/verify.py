@@ -31,12 +31,6 @@ def verify(
     def fail(msg: str) -> None:
         problems.append(msg)
 
-    s = r.super
-    if s["toc_offset"] != F.HEADER_SIZE:
-        fail(f"toc_offset {s['toc_offset']:#x} != {F.HEADER_SIZE:#x} (v1)")
-    if s["file_size"] < s["blob_offset"]:
-        fail("file_size smaller than blob_offset")
-
     # slot overlap check: ranges must be disjoint
     ranges = sorted((first, first + count, i)
                     for i, (_, first, count) in enumerate(r.dirs))

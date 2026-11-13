@@ -200,14 +200,14 @@ def parse_pkg(buf: bytes, off: int) -> Package:
 def parse_file(toc: bytes, pos: int) -> tuple[tuple[int, int], int, bytes, int, int, Codec]:
     (off, ln, size, eoff, esz, sha, codec, cflags, _r4) = \
         _file_s.unpack_from(toc, pos)
-    pos += FILE_SIZE
-    if codec not in Codec:
-        raise NupError(f"unknown extent codec {codec}")
-    codec = Codec(codec)
+    try:
+        extent_codec = Codec(codec)
+    except ValueError:
+        raise NupError(f"unknown extent codec {codec}") from None
     if cflags != 0:
         raise NupError(f"unknown codec_flags {cflags}")
-    if size == 0 and (eoff != 0 or esz != 0 or codec != CODEC_RAW):
+    if size == 0 and (eoff != 0 or esz != 0 or extent_codec != CODEC_RAW):
         raise NupError("zero-size file with nonempty extent")
     if size != 0 and esz == 0:
         raise NupError(f"file with nonzero size but empty extent")
-    return ((off, ln), size, sha, eoff, esz, codec)
+    return ((off, ln), size, sha, eoff, esz, extent_codec)

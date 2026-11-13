@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from . import format as F
 from .access import app_meta, build_id, extract_tree, find_package, iter_children, \
-    localized_titles, resolve_path
+    localized_titles, resolve_path, write_extracted_file
 from . import edit as edit_cmd
 from .discover import scan_source
 from .pack import out_inside_src, pack
@@ -172,9 +172,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
                 for ch in "/\\:*?\"<>|\0":
                     label = label.replace(ch, "_")
                 target = os.path.join(args.dest, f"{fi:05d}_{label}")
-                data = r.read_file(fi)
-                with open(target, "wb") as fh:
-                    fh.write(data)
+                write_extracted_file(r, fi, target)
                 n += 1
             print(f"extract: {n} files -> {args.dest}")
             return 0
@@ -689,7 +687,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("file")
     p.set_defaults(fn=_cmd_list)
 
-    p = sub.add_parser("extract", help="extract a package (or subtree) to a directory")
+    p = sub.add_parser("extract", help="extract a package (or subtree) without replacing files")
     p.add_argument("file")
     p.add_argument("dest")
     p.add_argument("--package", help="kind name (base/update/addon) or index")
