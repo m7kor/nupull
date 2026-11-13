@@ -10,17 +10,23 @@
 
 <p align="center">
   <a href="https://github.com/m7kor/nupull/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen?style=flat-square&logo=github" alt="CI Status"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue?style=flat-square&logo=python" alt="Python Versions"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=flat-square&logo=python" alt="Python Versions"></a>
   <a href="https://mypy-lang.org/"><img src="https://img.shields.io/badge/MyPy-strict%20clean-blueviolet?style=flat-square" alt="MyPy Strict"></a>
+  <a href="https://github.com/m7kor/nupull/releases/latest"><img src="https://img.shields.io/badge/release-v1.0.0-orange?style=flat-square&logo=github" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square" alt="Platform">
 </p>
 
 ---
 
-## Overview
+## ⚡ Highlights
 
-**Nupull** is an open-source, clean-room container suite and desktop studio built around the **`.nup` (NX Package)** container specification. It solves the fragmentation of modern Switch game archives by unifying Base games, Updates, and all DLC addons into a single, high-speed, Zstandard-compressed, atomically verified container.
+- **🖥️ Zero-Python Standalone App**: Portable Windows executable (`Nupull.exe`) with a sleek PyQt6 dark studio interface.
+- **🚀 Unified Container Pipeline**: Consolidate Base games, Title Updates, and DLCs into one lossless `.nup` container.
+- **⚡ Direct Format Streaming**: Convert `.nsp`, `.nsz`, `.xci`, and `.xcz` dumps with real-time memory streaming.
+- **🎮 In-Place LayeredFS Patching**: Inject mods directly into containers with instant SHA-256 verification.
+- **🔄 Bidirectional Exporter**: Export to Atmosphere MicroSD structure (`atmosphere/contents/<tid>`) or repacked `.nsp`.
+- **🛡️ 100% Atomic & Safe**: Atomic temporary file swapping prevents archive corruption during power loss or errors.
 
 ```
 Base Game (v0)  +  Update (v458752)  +  DLC Addons (0..N)
@@ -35,47 +41,34 @@ Base Game (v0)  +  Update (v458752)  +  DLC Addons (0..N)
 
 ---
 
-## Key Features
+## 📥 Downloads & Quick Start
 
-- **🚀 All-in-One Container Architecture**: Consolidates base game, multiple title updates, and multiple DLCs into one single `.nup` container with zero redundant data.
-- **⚡ High-Speed Direct Conversion (`nupull convert`)**: Directly convert raw dumps (`.nsp`, `.nsz`, `.xci`, `.xcz`) into `.nup` containers with in-memory virtual RomFS streaming (saving 50%+ temporary disk space).
-- **📦 Multi-Game Batch Converter (`nupull batch`)**: Scans massive directories containing hundreds of mixed dumps, inspects CNMT content meta headers in milliseconds, automatically pairs Base games with their matching Updates and DLCs, and converts them in parallel across all CPU cores.
-- **🎮 LayeredFS Mod Manager (`nupull patch`)**: Applies Atmosphere `contents/<tid>/...` or raw `romfs/exefs` mod directories directly into existing `.nup` containers with atomic verification—no need to extract gigabytes of data to disk.
-- **🔄 Bidirectional Exporter (`nupull export`)**: Export `.nup` containers directly to Atmosphere SD card structure (`atmosphere/contents/<tid>/...` ready for MicroSD), standard multi-package dump layout (`base/`, `updates/`, `dlc/`), or repacked installable Nintendo Submission Packages (`.nsp`).
-- **🛡️ 100% Atomic & Resilient**: All container creation and patching operations write to temporary `.partial` files and swap atomically. Interrupted runs, full disks, or crashes never corrupt existing data.
-- **🖥️ Standalone Desktop GUI**: Beautiful, high-tech dark studio interface built with PyQt6, featuring live throughput metrics, ETA, cooperative cancellation, and native desktop execution.
+### 1. Standalone Executable (Windows 10 / 11)
+No Python installation or command line required. Download directly from the **[Latest Release (v1.0.0)](https://github.com/m7kor/nupull/releases/latest)**:
 
----
+| Asset | Description | Size | Download |
+|---|---|---|---|
+| **`Nupull.exe`** | Standalone single-file portable GUI & CLI | ~41.6 MB | [Direct Download](https://github.com/m7kor/nupull/releases/download/v1.0.0/Nupull.exe) |
+| **`Nupull-v1.0.0-windows-x64.zip`** | Full archive with documentation and license | ~41.3 MB | [Direct Download](https://github.com/m7kor/nupull/releases/download/v1.0.0/Nupull-v1.0.0-windows-x64.zip) |
 
-## Installation & Quick Start
-
-### 1. Download Standalone Executable (Windows)
-Prebuilt standalone Windows binaries (`Nupull.exe`) that require no Python installation are available on the **[Releases](https://github.com/m7kor/nupull/releases)** page.
-
-### 2. Install via pip
+### 2. Install via pip (Python 3.12+)
 ```bash
 # Clone the repository
 git clone https://github.com/m7kor/nupull.git
 cd nupull
 
-# Install package with GUI dependencies
-pip install .[gui]
-```
+# Install with GUI support
+pip install ".[gui]"
 
-### 3. Launch the Desktop GUI
-```bash
-# Run via CLI launcher
+# Launch the Desktop Studio
 nupull-gui
-
-# Or run directly via Python
-python nup_gui.py
 ```
 
 ---
 
-## Desktop GUI Studio
+## 🖥️ Desktop GUI Studio
 
-The Nupull Desktop Studio organizes all workflows into clean, dedicated categories:
+The Nupull Desktop Studio organizes all workflows into clear, dedicated categories:
 
 | Category | Tools & Tabs | Purpose |
 |---|---|---|
@@ -85,7 +78,7 @@ The Nupull Desktop Studio organizes all workflows into clean, dedicated categori
 
 ---
 
-## Command-Line Interface (CLI)
+## ⌨️ Command-Line Interface (CLI)
 
 Nupull includes a comprehensive, scriptable command-line interface:
 
@@ -142,13 +135,13 @@ nupull verify ./game.nup --deep
 
 ---
 
-## Container Format Specification
+## 📐 Container Format Specification
 
 For detailed binary layouts, node structures, header flags, and compression algorithms, see **[SPEC.md](SPEC.md)**.
 
 ---
 
-## Security & Clean-Room Legal Notice
+## 🔒 Security & Clean-Room Legal Notice
 
 - **No Proprietary Keys**: Nupull is a clean-room, open-source container implementation. It **does not bundle, embed, or distribute** any proprietary Nintendo cryptographic keys (`prod.keys`, `title.keys`, master keys).
 - **Bring Your Own Keys (BYOK)**: Operations that decrypt official NCA partitions require user-supplied keys dumped from their own hardware (placed in `~/.switch/prod.keys` or specified via `--keys`).
@@ -157,6 +150,6 @@ For detailed binary layouts, node structures, header flags, and compression algo
 
 ---
 
-## License
+## 📄 License
 
 Nupull is released under the **[MIT License](LICENSE)**.
