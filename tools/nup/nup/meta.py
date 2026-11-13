@@ -154,7 +154,7 @@ def _encode_localized(entries: dict[str, bytes]) -> bytes:
     for lang in sorted(entries):
         tag = lang.lower().encode("ascii")
         if not 0 < len(tag) <= 255:
-            raise SystemExit(f"pack: bad language tag {lang!r}")
+            raise F.NupError(f"pack: bad language tag {lang!r}")
         data = entries[lang]
         body += bytes([len(tag)]) + tag
         body += struct.pack("<I", len(data)) + data

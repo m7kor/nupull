@@ -133,7 +133,7 @@ def _collect_updates(upd_dir: str, base_title_id: int, flags: int) -> list[PackI
             continue
         version = int(name, 10)
         if version > 0xFFFFFFFF:
-            raise SystemExit(
+            raise F.NupError(
                 f"pack: update version {name!r} does not fit the u32 version "
                 f"field (max 4294967295)")
         upd = PackInput(F.KIND_UPDATE, p, version=version, flags=flags)
@@ -193,11 +193,11 @@ def discover(src: str, base_title_id: int | None) -> list[PackInput]:
         _resolve_title_id(base, base_title_id)
         packages.append(base)
     else:
-        raise SystemExit(
+        raise F.NupError(
             f"pack: {src!r} is neither a dump bundle (base/updates/dlc), an update-only "
             f"dump (updates/), nor a content directory (exefs/ or romfs/)")
     if not packages:
-        raise SystemExit(f"pack: no packages found in {src!r}")
+        raise F.NupError(f"pack: no packages found in {src!r}")
     return packages
 
 
@@ -264,7 +264,7 @@ class Tree:
             entries = sorted(os.scandir(src),
                              key=lambda e: e.name.encode("utf-8", "surrogateescape"))
         except OSError as exc:
-            raise SystemExit(f"pack: cannot read {src}: {exc}")
+            raise F.NupError(f"pack: cannot read {src}: {exc}") from exc
         for entry in entries:
             ename = entry.name.encode("utf-8", "surrogateescape")
             if entry.is_dir(follow_symlinks=False):

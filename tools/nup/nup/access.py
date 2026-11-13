@@ -182,14 +182,14 @@ def extract_tree(
 
 
 def write_extracted_file(r: NupReader, file_index: int, path: str) -> None:
-    data = r.read_file(file_index)
     try:
         fh = open(path, "xb")
     except FileExistsError:
         raise F.NupError(f"refusing to overwrite existing path: {path}") from None
     try:
         with fh:
-            fh.write(data)
+            r.extract_file_to(file_index, fh)
     except BaseException:
-        os.unlink(path)
+        if os.path.exists(path):
+            os.unlink(path)
         raise

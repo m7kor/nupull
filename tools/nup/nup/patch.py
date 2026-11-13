@@ -61,11 +61,13 @@ def _collect_mod_tree(root: Path) -> dict[str, Path]:
 
     files: dict[str, Path] = {}
     for p in root.rglob("*"):
-        if not p.is_file():
+        if not p.is_file() or p.is_symlink():
             continue
         if p.name.lower() in _EXCLUDE_FILENAMES:
             continue
         rel = p.relative_to(root).as_posix()
+        if any(part in ("..", ".") or ":" in part for part in rel.split("/")):
+            continue
         if has_romfs or has_exefs:
             if rel.startswith("romfs/") or rel.startswith("exefs/"):
                 files[rel] = p

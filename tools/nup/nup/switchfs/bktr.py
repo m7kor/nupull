@@ -109,10 +109,14 @@ def load_bktr(reader: SectionReader) -> BktrTables:
 
 
 def _parse_reloc(blob: bytes) -> tuple[list[RelocEntry], int]:
+    if len(blob) < 16:
+        raise UnpackError("BKTR reloc table truncated")
     num_buckets = _u32(blob, 4)
     total = _u64(blob, 8)
     if not 0 < num_buckets <= 0x400:
         raise UnpackError(f"implausible BKTR reloc bucket count {num_buckets}")
+    if 16 + num_buckets * 8 > len(blob):
+        raise UnpackError("BKTR reloc bucket directory truncated")
     out: list[RelocEntry] = []
     for b in range(num_buckets):
         base = _BLOCK_HDR + b * _RELOC_BUCKET_SIZE
@@ -130,7 +134,10 @@ def _parse_reloc(blob: bytes) -> tuple[list[RelocEntry], int]:
             patch = _u32(blob, pos + 16)
             out.append(RelocEntry(virt, phys, patch != 0))
         if b + 1 < num_buckets:
-            nxt = _u64(blob, 16 + (b + 1) * 8)
+            bucket_idx_pos = 16 + (b + 1) * 8
+            if bucket_idx_pos + 8 > len(blob):
+                raise UnpackError("BKTR reloc bucket index truncated")
+            nxt = _u64(blob, bucket_idx_pos)
             out.append(RelocEntry(nxt, 0, False))
     out.append(RelocEntry(total, 0, False))
     return out, total
@@ -138,6 +145,8 @@ def _parse_reloc(blob: bytes) -> tuple[list[RelocEntry], int]:
 
 def _parse_subsec(blob: bytes, reloc_off: int, section_ctr: int,
                   section_size: int) -> list[SubsecEntry]:
+    if len(blob) < 8:
+        raise UnpackError("BKTR subsection table truncated")
     num_buckets = _u32(blob, 4)
     if not 0 < num_buckets <= 0x400:
         raise UnpackError(f"implausible BKTR subsection bucket count "
@@ -162,6 +171,8 @@ def _parse_subsec(blob: bytes, reloc_off: int, section_ctr: int,
         if b + 1 < num_buckets:
             # hactool: next bucket's first entry bounds this bucket.
             nb = _BLOCK_HDR + (b + 1) * _SUB_BUCKET_SIZE
+            if nb + _BUCKET_HDR + 12 > len(blob):
+                raise UnpackError("BKTR next subsection bucket truncated")
             nxt_off = _u64(blob, nb + _BUCKET_HDR)
             nxt_ctr = _u32(blob, nb + _BUCKET_HDR + 8)
             out.append(SubsecEntry(nxt_off, nxt_ctr))

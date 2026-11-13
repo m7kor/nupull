@@ -39,16 +39,16 @@ def _resolve_package(r: NupReader, package: str | None) -> PackageInfo:
         if package.isdigit() and package not in F.KIND_NAMES.values():
             idx = int(package)
             if idx >= len(r.packages):
-                raise SystemExit(f"edit: package index {idx} out of range "
+                raise F.NupError(f"edit: package index {idx} out of range "
                                  f"({len(r.packages)} packages)")
             return r.packages[idx]
         for kind, name in F.KIND_NAMES.items():
             if name == package:
                 found = next((p for p in r.packages if p.kind == kind), None)
                 if found is None:
-                    raise SystemExit(f"edit: no {name} package in container")
+                    raise F.NupError(f"edit: no {name} package in container")
                 return found
-        raise SystemExit(f"edit: unknown package {package!r} "
+        raise F.NupError(f"edit: unknown package {package!r} "
                          f"(kind name or index expected)")
     for p in r.packages:
         if p.meta_size and any(t in M.parse_block(_old_block(r, p)) for t in APP_TLVS):
@@ -157,7 +157,7 @@ def _parse_langs(items: list[str] | None, what: str) -> dict[str, str]:
     for item in items or []:
         lang, sep, value = item.partition("=")
         if not sep:
-            raise SystemExit(f"nup: --lang-{what} expects LANG=VALUE, got {item!r}")
+            raise F.NupError(f"nup: --lang-{what} expects LANG=VALUE, got {item!r}")
         out[lang.lower()] = value
     return out
 
@@ -169,7 +169,7 @@ def cmd(args: argparse.Namespace) -> int:
                bool(lang_names), bool(lang_icons), args.clear_name,
                args.clear_publisher, args.clear_display_version, args.clear_icon]
     if not any(touched):
-        raise SystemExit("edit: nothing to do - provide at least one metadata flag")
+        raise F.NupError("edit: nothing to do - provide at least one metadata flag")
     target = edit(args.file, package=args.package, name=args.name,
                   publisher=args.publisher, display_version=args.display_version,
                   icon=args.icon, lang_names=lang_names, lang_icons=lang_icons,

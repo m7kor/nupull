@@ -146,7 +146,7 @@ def _write_extents(
                 chunk = fh.read(min(_STREAM_CHUNK, left))
                 if not chunk:
                     name_str = fnode.src_path or fnode.name.decode("utf-8", "replace")
-                    raise SystemExit(
+                    raise F.NupError(
                         f"pack: {name_str!r} changed while packing")
                 h.update(chunk)
                 left -= len(chunk)
@@ -192,7 +192,7 @@ def _write_extents(
                             chunk = fh.read(min(_STREAM_CHUNK, left))
                             if not chunk:
                                 name_str = fnode.src_path or fnode.name.decode("utf-8", "replace")
-                                raise SystemExit(
+                                raise F.NupError(
                                     f"pack: {name_str!r} changed while packing")
                             left -= len(chunk)
                             consumed = fnode.size - left
@@ -220,7 +220,7 @@ def _write_extents(
                             chunk = fh.read(min(_STREAM_CHUNK, left))
                             if not chunk:
                                 name_str = fnode.src_path or fnode.name.decode("utf-8", "replace")
-                                raise SystemExit(
+                                raise F.NupError(
                                     f"pack: {name_str!r} changed while packing")
                             left -= len(chunk)
                             out.write(chunk)
@@ -379,11 +379,11 @@ def pack(
 
     for group_path, _ in groups:
         if out_inside_src(group_path, src):
-            raise SystemExit(
+            raise F.NupError(
                 f"pack: refusing to write {group_path} inside the source "
                 f"tree {src} - choose an output outside the dump")
         if os.path.exists(group_path) and not replace:
-            raise SystemExit(f"pack: refusing to overwrite {group_path}")
+            raise F.NupError(f"pack: refusing to overwrite {group_path}")
 
     partials = [group_path + ".partial" for group_path, _ in groups]
     for part in partials:
@@ -441,7 +441,7 @@ def _pack_container(
     threads: int = 0,
 ) -> list[PackInput]:
     if os.path.exists(out_path):
-        raise SystemExit(f"pack: refusing to overwrite {out_path}")
+        raise F.NupError(f"pack: refusing to overwrite {out_path}")
 
     # SPEC §3.1.2: an update package in a container without its base must be
     # flagged standalone_update - split update containers are exactly that.
@@ -529,7 +529,7 @@ def pack_virtual(
 ) -> list[PackInput]:
     """Pack an in-memory virtual tree directly into a .nup container."""
     if os.path.exists(out_path) and not replace:
-        raise SystemExit(f"pack: refusing to overwrite {out_path}")
+        raise F.NupError(f"pack: refusing to overwrite {out_path}")
 
     part = out_path + ".partial"
     try:

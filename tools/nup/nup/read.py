@@ -13,7 +13,7 @@ import hashlib
 import mmap
 import os
 import struct
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 from . import format as F
 
@@ -263,3 +263,43 @@ class NupReader:
         if len(data) != size:
             raise F.NupError(f"size mismatch for {name!r}: {len(data)} != {size}")
         return data
+
+    def extract_file_to(self, file_index: int, out_fh: BinaryIO, chunk_size: int = 1024 * 1024) -> None:
+        """Stream an uncompressed or decompressed file directly into an open binary stream."""
+        name, size, sha, eoff, esz, codec = self.files[file_index]
+        if size == 0:
+            return
+        if codec == F.CODEC_RAW:
+            if eoff + esz > len(self._mm):
+                raise F.NupError(f"extent out of bounds for {name!r}")
+            cur = eoff
+            end = eoff + esz
+            written = 0
+            while cur < end:
+                step = min(chunk_size, end - cur)
+                out_fh.write(self._mm[cur:cur + step])
+                cur += step
+                written += step
+            if written != size:
+                raise F.NupError(f"size mismatch for {name!r}: {written} != {size}")
+        elif codec == F.CODEC_ZSTD:
+            import io
+            import zstandard
+            comp = self._mm[eoff:eoff + esz]
+            if len(comp) != esz:
+                raise F.NupError(f"short read for {name!r}")
+            dctx = zstandard.ZstdDecompressor()
+            reader = dctx.stream_reader(io.BytesIO(comp))
+            written = 0
+            while True:
+                chunk = reader.read(chunk_size)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > size:
+                    raise F.NupError(f"decompressed data exceeds declared size for {name!r}")
+                out_fh.write(chunk)
+            if written != size:
+                raise F.NupError(f"size mismatch for {name!r}: {written} != {size}")
+        else:
+            raise F.NupError(f"unknown codec {codec}")

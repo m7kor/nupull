@@ -206,6 +206,8 @@ def parse_file(toc: bytes, pos: int) -> tuple[tuple[int, int], int, bytes, int, 
         raise NupError(f"unknown extent codec {codec}") from None
     if cflags != 0:
         raise NupError(f"unknown codec_flags {cflags}")
+    if _r4 != 0:
+        raise NupError("file reserved bytes not zero")
     if size == 0 and (eoff != 0 or esz != 0 or extent_codec != CODEC_RAW):
         raise NupError("zero-size file with nonempty extent")
     if size != 0 and esz == 0:

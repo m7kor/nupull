@@ -952,6 +952,95 @@ cli_export_dir = os.path.join(work, "cli_export_atmo")
 rc, out = cli(["export", direct_aio_nup, cli_export_dir, "--format", "atmosphere", "-q"])
 check(rc == 0 and os.path.isdir(cli_export_dir), "CLI export succeeds", out[:120])
 
+# ---------- R19: Security, Bounds Validation & Reliability Hardening ----------
+# 1. Export refusing overwrite when replace=False
+try:
+    export_container(direct_aio_nup, export_atmo_dir, fmt="atmosphere", replace=False)
+    check(False, "export atmosphere refusing overwrite when replace=False")
+except F.NupError:
+    check(True, "export atmosphere refusing overwrite when replace=False")
+
+try:
+    export_container(direct_aio_nup, export_dump_dir, fmt="dump", replace=False)
+    check(False, "export dump refusing overwrite when replace=False")
+except F.NupError:
+    check(True, "export dump refusing overwrite when replace=False")
+
+# 2. _safe_export_path path traversal protection
+from nup.export import _safe_export_path
+for bad_rel in ["../test.txt", "..\\test.txt", "/test.txt", "\\test.txt", "C:/evil.txt", "foo:bar"]:
+    try:
+        _safe_export_path(Path(export_atmo_dir), bad_rel)
+        check(False, f"_safe_export_path rejects {bad_rel}")
+    except F.NupError:
+        check(True, f"_safe_export_path rejects {bad_rel}")
+
+# 3. Format specification §3.4: parse_file rejects non-zero reserved bytes
+reserved_packed = F._file_s.pack(0, 0, 0, 0, 0, b"\x00" * 32, 0, 0, 1)
+try:
+    F.parse_file(reserved_packed, 0)
+    check(False, "parse_file rejects non-zero reserved bytes")
+except F.NupError:
+    check(True, "parse_file rejects non-zero reserved bytes")
+
+# 4. BKTR bounds validation: raises UnpackError on malformed reloc/subsec tables
+from nup.switchfs.bktr import _parse_reloc, _parse_subsec
+try:
+    _parse_reloc(b"\x00" * 8)
+    check(False, "bktr reloc table bounds check raises UnpackError")
+except UnpackError:
+    check(True, "bktr reloc table bounds check raises UnpackError")
+
+try:
+    _parse_subsec(b"\x00" * 4, 0, 0, 0)
+    check(False, "bktr subsec table bounds check raises UnpackError")
+except UnpackError:
+    check(True, "bktr subsec table bounds check raises UnpackError")
+
+# 5. NCZ decompression bounds validation: negative offset/size or excessive decompressed size
+from nup.switchfs.ncz import _decompress_blocks, ncz_to_nca
+import io
+
+def _fake_ncz_sectn(off: int, sz: int) -> bytes:
+    if off == 0 and sz == 0x4000:
+        return b"\x00" * 0x4000
+    if off == 0x4000 and sz == 8:
+        return b"NCZSECTN"
+    if off == 0x4008 and sz == 8:
+        return (1).to_bytes(8, "little")
+    if off == 0x4010 and sz == 56:
+        return (-100).to_bytes(8, "little", signed=True) + (100).to_bytes(8, "little") + b"\x00" * 40
+    return b""
+
+try:
+    ncz_to_nca(_fake_ncz_sectn, 0, Path("dummy.nca"))
+    check(False, "ncz rejects negative section offset")
+except UnpackError:
+    check(True, "ncz rejects negative section offset")
+
+bomb_meta = b"\x01\x00\x00\x0e" + (1).to_bytes(4, "little") + (200 << 30).to_bytes(8, "little")
+try:
+    _decompress_blocks(lambda off, sz: bomb_meta, 0, io.BytesIO(), on_progress=None, check=lambda: None)
+    check(False, "ncz rejects excessive decompressed size (>128 GiB bomb)")
+except UnpackError:
+    check(True, "ncz rejects excessive decompressed size (>128 GiB bomb)")
+
+# 6. Streaming extraction via extract_file_to
+import io
+with NupReader(direct_aio_nup) as r:
+    buf = io.BytesIO()
+    r.extract_file_to(0, buf)
+    check(buf.getvalue() == r.read_file(0), "streaming extract_file_to byte-identical to read_file")
+
+# 7. Elimination of SystemExit in library modules: raises F.NupError
+from nup.edit import _resolve_package
+with NupReader(direct_aio_nup) as r:
+    try:
+        _resolve_package(r, "999")
+        check(False, "edit package resolution out-of-range raises NupError")
+    except F.NupError:
+        check(True, "edit package resolution out-of-range raises NupError")
+
 # ---------- summary ----------
 print()
 if fails:

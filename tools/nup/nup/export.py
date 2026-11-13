@@ -38,6 +38,22 @@ def _sanitize_filename(name: str) -> str:
     return cleaned or "game"
 
 
+def _safe_export_path(base_dir: Path, rel: str) -> Path:
+    """Resolve `rel` relative to `base_dir`, strictly guarding against traversal."""
+    if not rel or rel.startswith(("/", "\\")) or ":" in rel:
+        raise F.NupError(f"export: unsafe file path in container: {rel!r}")
+    normalized = rel.replace("\\", "/")
+    parts = normalized.split("/")
+    if any(p in ("..", ".", "") or ":" in p for p in parts):
+        raise F.NupError(f"export: unsafe file path in container: {rel!r}")
+    target = base_dir.joinpath(*parts)
+    try:
+        target.resolve().relative_to(base_dir.resolve())
+    except (ValueError, RuntimeError):
+        raise F.NupError(f"export: path escapes destination directory: {rel!r}")
+    return target
+
+
 @dataclass(slots=True)
 class ExportResult:
     container_path: Path
@@ -290,12 +306,15 @@ def export_container(
             exported_bytes = 0
             for i, (rel, fi) in enumerate(files):
                 check_cancel()
-                dest_file = dest_base / rel
+                dest_file = _safe_export_path(dest_base, rel)
+                if dest_file.exists() and not replace:
+                    raise F.NupError(f"export: refusing to overwrite existing path: {dest_file}")
                 os.makedirs(dest_file.parent, exist_ok=True)
-                data = r.read_file(fi)
-                dest_file.write_bytes(data)
+                with open(dest_file, "wb") as out_fh:
+                    r.extract_file_to(fi, out_fh)
 
-                exported_bytes += len(data)
+                file_size = r.files[fi][1]
+                exported_bytes += file_size
                 prog.done = i + 1
                 prog.bytes_done = exported_bytes
                 prog.current = rel
@@ -354,13 +373,16 @@ def export_container(
 
                 for rel, fi in p_files:
                     check_cancel()
-                    dest_file = pkg_dest / rel
+                    dest_file = _safe_export_path(pkg_dest, rel)
+                    if dest_file.exists() and not replace:
+                        raise F.NupError(f"export: refusing to overwrite existing path: {dest_file}")
                     os.makedirs(dest_file.parent, exist_ok=True)
-                    data = r.read_file(fi)
-                    dest_file.write_bytes(data)
+                    with open(dest_file, "wb") as out_fh:
+                        r.extract_file_to(fi, out_fh)
 
+                    file_size = r.files[fi][1]
                     files_written += 1
-                    exported_bytes += len(data)
+                    exported_bytes += file_size
                     prog.done = files_written
                     prog.bytes_done = exported_bytes
                     prog.current = rel
@@ -376,6 +398,9 @@ def export_container(
 
             meta_dir = out_p / "_meta"
             os.makedirs(meta_dir, exist_ok=True)
+            info_file = meta_dir / "info.txt"
+            if info_file.exists() and not replace:
+                raise F.NupError(f"export: refusing to overwrite existing path: {info_file}")
             info_txt = (
                 f"title_id: {base_p.title_id:016x}\n"
                 f"version: {base_p.version}\n"
@@ -384,7 +409,7 @@ def export_container(
                 f"display_version: {nacp_ver}\n"
                 f"source_container: {container_p.name}\n"
             )
-            (meta_dir / "info.txt").write_text(info_txt, encoding="utf-8")
+            info_file.write_text(info_txt, encoding="utf-8")
 
             prog.stage = "done"
             if progress:

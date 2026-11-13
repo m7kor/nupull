@@ -98,6 +98,8 @@ def ncz_to_nca(
         s_offset = int.from_bytes(blob[0:8], "little", signed=True)
         s_size = int.from_bytes(blob[8:16], "little", signed=True)
         s_crypto = int.from_bytes(blob[16:24], "little", signed=True)
+        if s_offset < 0 or s_size < 0:
+            raise UnpackError(f"negative NCZ section bounds (offset={s_offset}, size={s_size})")
         sections.append((s_offset, s_size, s_crypto, blob[24:40],
                          blob[40:56]))
         pos += 56
@@ -175,6 +177,8 @@ def _decompress_blocks(
     decompressed_size = int.from_bytes(meta[8:16], "little", signed=True)
     if not 0 < block_count <= 1 << 24 or not 0 <= block_size_exp <= 40:
         raise UnpackError("implausible NCZBLOCK header")
+    if decompressed_size < 0 or decompressed_size > (128 << 30):
+        raise UnpackError(f"implausible NCZBLOCK decompressed size {decompressed_size}")
     sizes_blob = read_at(body_off + 16, block_count * 4)
     if len(sizes_blob) != block_count * 4:
         raise UnpackError("NCZBLOCK size table truncated")
