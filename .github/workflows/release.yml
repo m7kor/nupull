@@ -38,7 +38,8 @@ jobs:
 
       - name: Create release zip
         run: |
-          Compress-Archive -Path dist/Nupull.exe, README.md, LICENSE -DestinationPath Nupull-v1.0.0-windows-x64.zip
+          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v1.0.1" }
+          Compress-Archive -Path dist/Nupull.exe, README.md, LICENSE -DestinationPath "Nupull-${tag}-windows-x64.zip"
 
       - name: Upload artifact to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -46,6 +47,6 @@ jobs:
         with:
           files: |
             dist/Nupull.exe
-            Nupull-v1.0.0-windows-x64.zip
+            Nupull-*-windows-x64.zip
           draft: false
           prerelease: false

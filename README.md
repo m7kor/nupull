@@ -12,7 +12,7 @@
   <a href="https://github.com/m7kor/nupull/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen?style=flat-square&logo=github" alt="CI Status"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=flat-square&logo=python" alt="Python Versions"></a>
   <a href="https://mypy-lang.org/"><img src="https://img.shields.io/badge/MyPy-strict%20clean-blueviolet?style=flat-square" alt="MyPy Strict"></a>
-  <a href="https://github.com/m7kor/nupull/releases/latest"><img src="https://img.shields.io/badge/release-v1.0.0-orange?style=flat-square&logo=github" alt="Release"></a>
+  <a href="https://github.com/m7kor/nupull/releases/latest"><img src="https://img.shields.io/badge/release-v1.0.1-orange?style=flat-square&logo=github" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square" alt="Platform">
 </p>
@@ -44,12 +44,12 @@ Base Game (v0)  +  Update (v458752)  +  DLC Addons (0..N)
 ## 📥 Downloads & Quick Start
 
 ### 1. Standalone Executable (Windows 10 / 11)
-No Python installation or command line required. Download directly from the **[Latest Release (v1.0.0)](https://github.com/m7kor/nupull/releases/latest)**:
+No Python installation or command line required. Download directly from the **[Latest Release (v1.0.1)](https://github.com/m7kor/nupull/releases/latest)**:
 
 | Asset | Description | Size | Download |
 |---|---|---|---|
-| **`Nupull.exe`** | Standalone single-file portable GUI & CLI | ~41.6 MB | [Direct Download](https://github.com/m7kor/nupull/releases/download/v1.0.0/Nupull.exe) |
-| **`Nupull-v1.0.0-windows-x64.zip`** | Full archive with documentation and license | ~41.3 MB | [Direct Download](https://github.com/m7kor/nupull/releases/download/v1.0.0/Nupull-v1.0.0-windows-x64.zip) |
+| **`Nupull.exe`** | Standalone single-file portable GUI & CLI | ~41.6 MB | [Direct Download](https://github.com/m7kor/nupull/releases/download/v1.0.1/Nupull.exe) |
+| **`Nupull-v1.0.1-windows-x64.zip`** | Full archive with documentation and license | ~41.3 MB | [Direct Download](https://github.com/m7kor/nupull/releases/download/v1.0.1/Nupull-v1.0.1-windows-x64.zip) |
 
 ### 2. Install via pip (Python 3.12+)
 ```bash
