@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nupull"
+version = "1.0.0"
+description = "Modern NX container studio, batch converter, mod patcher, and exporter for Nintendo Switch 1/2"
+readme = "README.md"
+authors = [{ name = "m7kor" }]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = [
+    "nintendo-switch",
+    "switch",
+    "romfs",
+    "exefs",
+    "nsp",
+    "xci",
+    "nsz",
+    "xcz",
+    "layeredfs",
+    "modding",
+    "container",
+    "zstandard",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Archiving",
+    "Topic :: System :: Archiving :: Compression",
+    "Topic :: Games/Entertainment",
+]
+dependencies = [
+    "pycryptodome>=3.19.0",
+    "zstandard>=0.22.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "pyqt6>=6.5.0",
+]
+dev = [
+    "mypy>=1.9.0",
+    "pyinstaller>=6.5.0",
+]
+
+[project.scripts]
+nupull = "nup.cli:main"
+nup = "nup.cli:main"
+nupull-gui = "nup_gui:main"
+
+[project.urls]
+Homepage = "https://github.com/m7kor/nupull"
+Repository = "https://github.com/m7kor/nupull.git"
+Issues = "https://github.com/m7kor/nupull/issues"
+
+[tool.setuptools.packages.find]
+where = ["tools/nup"]
+include = ["nup*"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

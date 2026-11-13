@@ -1,0 +1,30 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+*.spec
+*.zip
+
+# Nintendo proprietary files (Never commit keys or dumps)
+*.keys
+prod.keys
+title.keys
+*.nsp
+*.nsz
+*.xci
+*.xcz
+*.nca
+*.nup
+
+# Local test outputs & temp folders
+ATHOME.md
+DKB.nup
+Game/
+*.tmp
+*.partial
+*.log
