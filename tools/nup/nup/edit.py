@@ -125,6 +125,7 @@ def edit(path: str, *, package: str | None = None, name: str | None = None,
 
             with open(tmp, "wb") as out:
                 out.write(superblock)
+                out.write(r._mm[F.HEADER_SIZE:s["toc_offset"]])
                 out.write(toc)
                 copy_pos = s["toc_offset"] + s["toc_size"]
                 while copy_pos < blob_end:

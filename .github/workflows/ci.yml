@@ -14,7 +14,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, windows-latest, macos-latest ]
-        python-version: [ "3.10", "3.11", "3.12" ]
+        python-version: [ "3.10", "3.11", "3.12", "3.13" ]
+    env:
+      PYTHONUTF8: "1"
 
     steps:
       - name: Checkout repository
@@ -29,12 +31,23 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[dev]
+          python -m pip install ".[dev]"
 
       - name: Run MyPy strict type check
         run: |
-          mypy tools/nup/nup
+          python -m mypy --python-version ${{ matrix.python-version }} tools/nup/nup
 
       - name: Run full regression test suite
         run: |
           python tests/regression.py
+
+      - name: Smoke test installed GUI
+        if: matrix.os == 'windows-latest' && matrix.python-version == '3.12'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        shell: pwsh
+        run: |
+          python -m pip install ".[gui]"
+          $output = nupull-gui --smoke --page auto
+          $output
+          if ($LASTEXITCODE -ne 0 -or -not ($output -match '^SMOKE-OK')) { exit 1 }

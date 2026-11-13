@@ -39,7 +39,7 @@ classifiers = [
     "Topic :: Games/Entertainment",
 ]
 dependencies = [
-    "pycryptodome>=3.19.0",
+    "cryptography>=42",
     "zstandard>=0.22.0",
 ]
 
@@ -61,6 +61,10 @@ nupull-gui = "nup_gui:main"
 Homepage = "https://github.com/m7kor/nupull"
 Repository = "https://github.com/m7kor/nupull.git"
 Issues = "https://github.com/m7kor/nupull/issues"
+
+[tool.setuptools]
+py-modules = ["nup_gui"]
+package-dir = { "" = ".", nup = "tools/nup/nup" }
 
 [tool.setuptools.packages.find]
 where = ["tools/nup"]

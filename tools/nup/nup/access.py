@@ -156,7 +156,7 @@ def extract_tree(
     dir_index: int,
     progress: Callable[[int, NodeRef], None] | None = None,
 ) -> int:
-    """Extract a directory subtree to dest. Returns number of files written."""
+    """Extract a subtree to dest without replacing files. Return the file count."""
     n = 0
     os.makedirs(dest, exist_ok=True)
     stack = [(dir_index, dest)]
@@ -174,10 +174,22 @@ def extract_tree(
             if child.is_dir:
                 stack.append((child.index, cpath))
             else:
-                data = r.read_file(child.index)
-                with open(cpath, "wb") as fh:
-                    fh.write(data)
+                write_extracted_file(r, child.index, cpath)
                 n += 1
                 if progress:
                     progress(n, child)
     return n
+
+
+def write_extracted_file(r: NupReader, file_index: int, path: str) -> None:
+    data = r.read_file(file_index)
+    try:
+        fh = open(path, "xb")
+    except FileExistsError:
+        raise F.NupError(f"refusing to overwrite existing path: {path}") from None
+    try:
+        with fh:
+            fh.write(data)
+    except BaseException:
+        os.unlink(path)
+        raise

@@ -91,6 +91,31 @@ check(n == 4, "extract legit count", f"n={n}")
 check(open(os.path.join(dest, "romfs", safe.decode()), "rb").read() == b"PWNED-VIA-EXTRACT",
       "extracted bytes identical")
 
+# A second extraction must preserve existing files in both CLI modes.
+for mode in ([], ["--flat"]):
+    target_dir = Path(work) / ("retry_flat" if mode else "retry_tree")
+    rc, out = cli(["extract", nup1, str(target_dir), *mode])
+    check(rc == 0, f"first extraction succeeds ({mode or 'tree'})", out)
+    extracted = [p for p in target_dir.rglob("*") if p.is_file()]
+    check(len(extracted) == 4, f"first extraction writes four files ({mode or 'tree'})")
+    for path in extracted:
+        path.write_bytes(b"keep existing data")
+    rc, out = cli(["extract", nup1, str(target_dir), *mode])
+    check(rc == 2 and "refusing to overwrite" in out,
+          f"repeat extraction rejects existing files ({mode or 'tree'})", out)
+    check(all(path.read_bytes() == b"keep existing data" for path in extracted),
+          f"repeat extraction preserves file content ({mode or 'tree'})")
+
+# A short, correctly hashed TOC is reported as a format error by verify().
+short_toc = bytearray(Path(nup1).read_bytes())
+struct.pack_into("<Q", short_toc, 16, F._toc_head_s.size - 1)
+rehash_toc(short_toc)
+short_toc_path = Path(work) / "short_toc.nup"
+short_toc_path.write_bytes(short_toc)
+ok, problems = verify(str(short_toc_path))
+check(not ok and any("TOC header truncated" in problem for problem in problems),
+      "verify reports a truncated TOC header", str(problems))
+
 # ---------- B2: edit metadata ----------
 rc, out = cli(["edit", nup1, "--name", "Audit Game", "--publisher", "QA"])
 check(rc == 0 and "updated" in out, "edit works", out[:120])
@@ -98,6 +123,33 @@ rc, out = cli(["info", nup1])
 check("Audit Game" in out and "QA" in out, "edited metadata visible")
 rc, out = cli(["verify", nup1])
 check(rc == 0, "verify still OK after edit")
+
+# Header extension bytes are opaque and must survive a metadata edit.
+extended = bytearray(Path(nup1).read_bytes())
+extension = b"extension-bytes!"
+header_size = F.HEADER_SIZE + len(extension)
+extended[F.HEADER_SIZE:F.HEADER_SIZE] = extension
+struct.pack_into("<HHQ", extended, 4, header_size, 2, header_size)
+blob_offset = struct.unpack_from("<Q", extended, 56)[0] + len(extension)
+struct.pack_into("<QQ", extended, 56, blob_offset, len(extended))
+pkg_offset = header_size + F._toc_head_s.size
+meta_offset = struct.unpack_from("<Q", extended, pkg_offset + 32)[0]
+struct.pack_into("<Q", extended, pkg_offset + 32, meta_offset + len(extension))
+dir_count, file_count = struct.unpack_from("<QQ", extended, header_size + 8)
+files_offset = pkg_offset + F.PKG_SIZE + dir_count * F.DIR_SIZE
+for index in range(file_count):
+    file_offset = files_offset + index * F.FILE_SIZE
+    extent_offset = struct.unpack_from("<Q", extended, file_offset + 16)[0]
+    if extent_offset:
+        struct.pack_into("<Q", extended, file_offset + 16, extent_offset + len(extension))
+rehash_toc(extended)
+extended_path = Path(work) / "extended_header.nup"
+extended_path.write_bytes(extended)
+rc, out = cli(["edit", str(extended_path), "--name", "Extended Header Game"])
+check(rc == 0 and extended_path.read_bytes()[F.HEADER_SIZE:header_size] == extension,
+      "metadata edit preserves extended header bytes", out)
+ok, problems = verify(str(extended_path), deep=True)
+check(ok and not problems, "edited container with extended header verifies", str(problems))
 
 # ---------- A1: path traversal name ----------
 data = bytearray(open(nup1, "rb").read())
