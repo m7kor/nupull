@@ -7,10 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish to GitHub Releases (manual authorization gate)"
+        description: "Publish to GitHub Releases (explicit manual authorization gate)"
         required: true
         type: boolean
         default: false
+      expected_tag:
+        description: "Exact approved tag to publish (e.g. v1.0.2-rc.1)"
+        required: true
+        type: string
+        default: "v1.0.2-rc.1"
+      expected_commit:
+        description: "Exact approved commit SHA to publish"
+        required: true
+        type: string
+        default: "937e73104a45d1d0b08bd32ca057c9cf37ebe393"
       force_prerelease:
         description: "Force mark as pre-release"
         required: false
@@ -47,7 +57,7 @@ jobs:
         run: |
           python -m mypy --python-version 3.12 tools/nup/nup
 
-      - name: Quality Gate 2: Full Regression Suite (165 checks)
+      - name: Quality Gate 2: Full Regression Suite (168 checks)
         run: |
           python tests/regression.py
 
@@ -94,12 +104,13 @@ jobs:
           retention-days: 14
 
   publish-release:
-    name: Publish Release (Protected Environment)
+    name: Publish Release (Explicit Authorization Gate)
     needs: build-and-verify
     runs-on: ubuntu-latest
     environment:
       name: production-release
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    # Critical publication protection: Tag push alone NEVER publishes; explicit workflow_dispatch authorization required
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     permissions:
       contents: write
 
@@ -113,7 +124,22 @@ jobs:
           TAG="${GITHUB_REF_NAME:-v1.0.2-rc.1}"
           echo "Processing Tag: $TAG"
 
-          # Extract package version from source code
+          # 1. Verify approved tag matches workflow input
+          EXPECTED_INPUT_TAG="${{ inputs.expected_tag }}"
+          if [ -n "$EXPECTED_INPUT_TAG" ] && [ "$TAG" != "$EXPECTED_INPUT_TAG" ]; then
+            echo "::error::Target Tag '$TAG' does not match explicitly approved input tag '$EXPECTED_INPUT_TAG'"
+            exit 1
+          fi
+
+          # 2. Verify approved commit SHA
+          EXPECTED_INPUT_COMMIT="${{ inputs.expected_commit }}"
+          ACTUAL_COMMIT="${GITHUB_SHA}"
+          if [ -n "$EXPECTED_INPUT_COMMIT" ] && [ "$ACTUAL_COMMIT" != "$EXPECTED_INPUT_COMMIT" ]; then
+            echo "::error::Current commit '$ACTUAL_COMMIT' does not match explicitly approved commit '$EXPECTED_INPUT_COMMIT'"
+            exit 1
+          fi
+
+          # 3. Extract package version from source code
           PKG_VER=$(python3 -c "import re; m = re.search(r'__version__\s*=\s*[\"\']([^\"\']+)[\"\']', open('tools/nup/nup/__init__.py').read()); print(m.group(1) if m else '')")
           echo "Package Version: $PKG_VER"
           if [ -z "$PKG_VER" ]; then
@@ -121,8 +147,8 @@ jobs:
             exit 1
           fi
 
-          # Strict SemVer validation
-          # 1. Stable release pattern: vX.Y.Z
+          # 4. Strict SemVer validation
+          # Stable release pattern: vX.Y.Z
           if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             EXPECTED_TAG="v${PKG_VER}"
             if [ "$TAG" != "$EXPECTED_TAG" ]; then
@@ -139,7 +165,7 @@ jobs:
               echo "make_latest=true" >> $GITHUB_OUTPUT
             fi
 
-          # 2. Pre-release / Release Candidate pattern: vX.Y.Z-(rc|beta|alpha).N
+          # Pre-release / Release Candidate pattern: vX.Y.Z-(rc|beta|alpha).N
           elif [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-(rc|beta|alpha)\.([0-9]+)$ ]]; then
             EXPECTED_TAG="v${PKG_VER}"
             if [ "$TAG" != "$EXPECTED_TAG" ]; then
@@ -150,7 +176,7 @@ jobs:
             echo "prerelease=true" >> $GITHUB_OUTPUT
             echo "make_latest=false" >> $GITHUB_OUTPUT
 
-          # 3. Reject any malformed or unexpected tag formats
+          # Reject any malformed or unexpected tag formats
           else
             echo "::error::Malformed or unauthorized release tag '$TAG'. Only strict SemVer (vX.Y.Z) or pre-release (vX.Y.Z-(rc|beta|alpha).N) tags are permitted."
             exit 1
@@ -161,6 +187,18 @@ jobs:
         with:
           name: nupull-release-artifacts
           path: release-dist
+
+      - name: Verify Artifact Checksums
+        shell: bash
+        run: |
+          cd release-dist
+          if [ -f SHA256SUMS.txt ]; then
+            echo "Verifying SHA256 checksums..."
+            sha256sum -c SHA256SUMS.txt
+          else
+            echo "::error::SHA256SUMS.txt not found in build artifacts"
+            exit 1
+          fi
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@c062e496a77e5e3d744b15096530a59918d36eb8 # v2.2.1
