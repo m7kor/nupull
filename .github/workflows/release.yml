@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@0b93645e9dc2c792dd34633eab10a4c77d45c6b6 # v5.3.0
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -250,7 +250,7 @@ jobs:
           fi
 
       - name: Publish to GitHub Releases
-        uses: softprops/action-gh-release@c062e496a77e5e3d744b15096530a59918d36eb8 # v2.2.1
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
         with:
           tag_name: ${{ steps.classify.outputs.tag }}
           target_commitish: ${{ github.sha }}
