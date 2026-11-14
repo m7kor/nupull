@@ -53,27 +53,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[gui,dev]
 
-      - name: Quality Gate 1: Type Checking (MyPy)
+      - name: "Quality Gate 1: Type Checking (MyPy)"
         run: |
           python -m mypy --python-version 3.12 tools/nup/nup
 
-      - name: Quality Gate 2: Full Regression Suite (168 checks)
+      - name: "Quality Gate 2: Full Regression Suite (168 checks)"
         run: |
           python tests/regression.py
 
-      - name: Quality Gate 3: End-to-End Format Validation (5 pathways)
+      - name: "Quality Gate 3: End-to-End Format Validation (5 pathways)"
         run: |
           python tests/e2e_roundtrip.py
 
-      - name: Quality Gate 4: NCZ Stream Unit Tests
+      - name: "Quality Gate 4: NCZ Stream Unit Tests"
         run: |
           python -m unittest tests/test_ncz_stream.py
 
-      - name: Quality Gate 5: Build Executable with PyInstaller
+      - name: "Quality Gate 5: Build Executable with PyInstaller"
         run: |
           pyinstaller --noconsole --onefile --name "Nupull" --icon "assets/nupull.ico" --paths "tools/nup" --collect-all nup nup_gui.py
 
-      - name: Quality Gate 6: Smoke Test Packaged Executable
+      - name: "Quality Gate 6: Smoke Test Packaged Executable"
         run: |
           ./dist/Nupull.exe --version
           ./dist/Nupull.exe --build-info
