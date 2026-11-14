@@ -69,12 +69,8 @@ jobs:
           python -m unittest tests/test_ncz_stream.py
 
       - name: "Quality Gate 4.5: Generate Build Metadata"
-        shell: pwsh
         run: |
-          $commit = (git rev-parse HEAD).Trim()
-          Write-Host "Embedding Git commit into build metadata: $commit"
-          python -c "import sys; open('tools/nup/nup/_build_meta.py', 'w', encoding='utf-8').write(f'COMMIT = \"{sys.argv[1]}\"\n')" $commit
-          Get-Content tools/nup/nup/_build_meta.py
+          python tools/gen_build_meta.py
 
       - name: "Quality Gate 5: Build Executable with PyInstaller"
         run: |
@@ -84,31 +80,7 @@ jobs:
         shell: pwsh
         run: |
           $expectedCommit = (git rev-parse HEAD).Trim()
-          Write-Host "Expected Git Commit: $expectedCommit"
-          
-          # Inspect version and build info with provenance assertion
-          python -c "import subprocess, sys, re
-          expected = sys.argv[1].strip()
-          r_ver = subprocess.run(['dist/Nupull.exe', '--version'], capture_output=True, text=True, errors='replace')
-          print('Executable Version Output:', r_ver.stdout.strip())
-          
-          r_info = subprocess.run(['dist/Nupull.exe', '--build-info'], capture_output=True, text=True, errors='replace')
-          print(r_info.stdout)
-          
-          m = re.search(r'Source Commit\s*:\s*([a-f0-9]{40})', r_info.stdout)
-          if not m:
-              sys.exit('CRITICAL: Failed to parse 40-character Source Commit from --build-info output!')
-          embedded = m.group(1).strip()
-          if embedded != expected:
-              sys.exit(f'CRITICAL: Embedded commit ({embedded}) does not match expected Git HEAD ({expected})!')
-          print(f'PROVENANCE VERIFIED: Executable embedded commit matches Git HEAD exactly ({embedded}).')
-          
-          r_smoke = subprocess.run(['dist/Nupull.exe', '--smoke', '--page', 'auto'], capture_output=True, text=True, errors='replace')
-          print(r_smoke.stdout)
-          if 'SMOKE-OK loaded=True' not in r_smoke.stdout:
-              sys.exit('CRITICAL: Packaged executable failed GUI smoke test!')
-          print('GUI SMOKE TEST PASSED.')
-          " $expectedCommit
+          python tools/verify_build.py $expectedCommit
 
       - name: Generate Checksums & Release Archive
         shell: pwsh
