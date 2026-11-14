@@ -1255,10 +1255,10 @@ from nup.build_info import get_build_info, format_build_info
 binfo = get_build_info()
 check(isinstance(binfo, dict) and "version" in binfo and "commit" in binfo,
       "get_build_info() returns structured dictionary with version and commit")
-check(binfo["package_name"] == "nupull" and binfo["version"] == "1.0.2-rc.1",
+check(binfo["package_name"] == "nupull" and binfo["version"] == "1.0.2",
       "get_build_info() package_name and version match package metadata")
 binfo_str = format_build_info()
-check("Nupull NX Container Studio — Build Diagnostics" in binfo_str and "1.0.2-rc.1" in binfo_str,
+check("Nupull NX Container Studio — Build Diagnostics" in binfo_str and "1.0.2" in binfo_str,
       "format_build_info() produces formatted diagnostic summary")
 
 # ---------- summary ----------

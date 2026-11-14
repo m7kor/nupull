@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.2] - Proposed Stable Release (Release Candidate: 1.0.2-rc.1)
+## [1.0.2] - 2026-11-15
 
 ### Security
 - **Windows Reserved Device Protection (SEC-08)**: Hardened `_safe_resolve` in `unpack.py` and `_safe_export_path` in `export.py` to strictly reject Windows special device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`) and paths with trailing dots or whitespace.

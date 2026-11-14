@@ -12,10 +12,10 @@ on:
         type: boolean
         default: false
       expected_tag:
-        description: "Exact approved tag to publish (e.g. v1.0.2-rc.1)"
+        description: "Exact approved tag to publish (e.g. v1.0.2)"
         required: true
         type: string
-        default: "v1.0.2-rc.1"
+        default: "v1.0.2"
       expected_commit:
         description: "Exact approved commit SHA to publish (must match checked out commit)"
         required: true
@@ -85,7 +85,7 @@ jobs:
       - name: Generate Checksums & Release Archive
         shell: pwsh
         run: |
-          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v1.0.2-rc.1" }
+          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v1.0.2" }
           $zipName = "Nupull-${tag}-windows-x64.zip"
           Compress-Archive -Path dist/Nupull.exe, README.md, LICENSE, CHANGELOG.md -DestinationPath $zipName
           
