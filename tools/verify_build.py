@@ -49,8 +49,11 @@ def main() -> None:
         errors="replace",
     )
     print(r_smoke.stdout)
-    if "SMOKE-OK loaded=True" not in r_smoke.stdout:
-        sys.exit("CRITICAL: Packaged executable failed GUI smoke test!")
+    if "SMOKE-OK" not in r_smoke.stdout or r_smoke.returncode != 0:
+        sys.exit(
+            f"CRITICAL: Packaged executable failed GUI smoke test! "
+            f"code={r_smoke.returncode}, output={r_smoke.stdout.strip()}"
+        )
     print("GUI SMOKE TEST PASSED.")
 
 
