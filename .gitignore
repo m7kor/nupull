@@ -9,6 +9,7 @@ build/
 .mypy_cache/
 *.spec
 *.zip
+tools/nup/nup/_build_meta.py
 
 # Nintendo proprietary files (Never commit keys or dumps)
 *.keys

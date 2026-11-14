@@ -41,7 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **True Peak Memory Profiler**: Added `tests/benchmark_perf.py` utilizing high-frequency OS kernel sampling to verify bounded RSS scaling across workloads up to 1 GiB.
 
 ### Packaging & CI/CD
-- **Two-Stage Hardened Release Workflow**: Separated build/verification from publication in GitHub Actions with read-only permissions during compilation and strict semver classification preventing release candidates from being marked as stable.
+- **Two-Stage Hardened Release Workflow**: Separated build/verification from publication in GitHub Actions with read-only permissions during compilation, protected `production-release` environment gating, immutable action SHA pinning, and strict SemVer classification preventing release candidates from being marked as stable.
+- **Diagnostic Build Information**: Added `--build-info` command in both CLI and GUI reporting source commit SHA, release channel, runtime platform, frozen status, and package metadata for complete source-to-binary traceability.
 - **Unified Version Reporting**: Added `--version` CLI flag to `nupull` and GUI window title reporting synchronized with `tools/nup/nup/__init__.py`.
 - **Automated Checksum Generation**: Integrated SHA-256 checksum generation for standalone executables and release archives.
 

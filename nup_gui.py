@@ -3701,9 +3701,23 @@ class MainWindow(QMainWindow):
 
 # ---- entry point -----------------------------------------------------------
 
+class _GuiBuildInfoAction(argparse.Action):
+    def __init__(self, option_strings: list[str], dest: str = argparse.SUPPRESS,
+                 default: str = argparse.SUPPRESS, help: str | None = None) -> None:
+        super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
+
+    def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace,
+                 values: object = None, option_string: str | None = None) -> None:
+        from nup.build_info import format_build_info
+        print(format_build_info())
+        parser.exit(0)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="NUP GUI")
     parser.add_argument("--version", action="version", version=f"Nupull {__version__}")
+    parser.add_argument("--build-info", action=_GuiBuildInfoAction,
+                        help="display build, commit, platform, and runtime diagnostics")
     parser.add_argument("--smoke", action="store_true",
                         help="open the window, then quit automatically")
     parser.add_argument("--file", help="container to open on startup")

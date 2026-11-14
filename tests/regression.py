@@ -1250,6 +1250,17 @@ ncz_to_nca(bounded_ncz_reader, 0, sml_decomp_out, nca_size=len(ncz_sml_bytes))
 check(sml_decomp_out.is_file() and sml_decomp_out.stat().st_size == 0x4000 + len(small_payload),
       "ncz_to_nca solid decompression succeeds on bounded slice with small payload")
 
+# 16. Build information and diagnostics validation
+from nup.build_info import get_build_info, format_build_info
+binfo = get_build_info()
+check(isinstance(binfo, dict) and "version" in binfo and "commit" in binfo,
+      "get_build_info() returns structured dictionary with version and commit")
+check(binfo["package_name"] == "nupull" and binfo["version"] == "1.0.2-rc.1",
+      "get_build_info() package_name and version match package metadata")
+binfo_str = format_build_info()
+check("Nupull NX Container Studio — Build Diagnostics" in binfo_str and "1.0.2-rc.1" in binfo_str,
+      "format_build_info() produces formatted diagnostic summary")
+
 # ---------- summary ----------
 print()
 if fails:

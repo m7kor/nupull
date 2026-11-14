@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import sys
 import time
-from typing import TYPE_CHECKING 
+from typing import TYPE_CHECKING, Any, Sequence
 
 from . import format as F
 from .access import app_meta, build_id, extract_tree, find_package, iter_children, \
@@ -648,6 +648,19 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+class _BuildInfoAction(argparse.Action):
+    def __init__(self, option_strings: list[str], dest: str = argparse.SUPPRESS,
+                 default: str = argparse.SUPPRESS, help: str | None = None) -> None:
+        super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
+
+    def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace,
+                 values: str | Sequence[Any] | None,
+                 option_string: str | None = None) -> None:
+        from .build_info import format_build_info
+        print(format_build_info())
+        parser.exit(0)
+
+
 def main(argv: list[str] | None = None) -> int:
     from . import __version__
     ap = argparse.ArgumentParser(
@@ -655,6 +668,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Nupull — Modern NX Package (NUP) container studio",
     )
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    ap.add_argument("--build-info", action=_BuildInfoAction,
+                    help="display build, commit, platform, and runtime diagnostics")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("pack", help="pack a dump directory into an .nup")
