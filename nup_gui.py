@@ -53,7 +53,7 @@ if _tools_nup.is_dir() and str(_tools_nup) not in sys.path:
     sys.path.insert(0, str(_tools_nup))
 
 try:
-    from nup import format as F
+    from nup import __version__, format as F
     from nup.access import app_meta, build_id, extract_tree, iter_children, \
         resolve_path
     from nup.discover import scan_source
@@ -861,7 +861,7 @@ class MainWindow(QMainWindow):
         self._auto_cancelled = False
         self._auto_result: dict | None = None
 
-        self.setWindowTitle("Nupull — NX Package Manager (Switch 1/2)")
+        self.setWindowTitle(f"Nupull v{__version__} — NX Package Manager (Switch 1/2)")
         self.setWindowIcon(QIcon(create_nav_icon("nupull", 48)))
         self.resize(1260, 840)
         self.setAcceptDrops(True)
@@ -3703,6 +3703,7 @@ class MainWindow(QMainWindow):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="NUP GUI")
+    parser.add_argument("--version", action="version", version=f"Nupull {__version__}")
     parser.add_argument("--smoke", action="store_true",
                         help="open the window, then quit automatically")
     parser.add_argument("--file", help="container to open on startup")

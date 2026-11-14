@@ -41,6 +41,19 @@ Base Game (v0)  +  Update (v458752)  +  DLC Addons (0..N)
 
 ---
 
+## 🎮 Format Support & Conversion Matrix
+
+| Format | Unpack / Read | Direct Convert | Streaming Export | Roundtrip Integrity | Notes |
+|---|:---:|:---:|:---:|:---:|---|
+| **NSP (PFS0)** | ✅ Full | ✅ Full | ✅ Full (`--format nsp`) | **Byte-Identical** | Lossless streaming reconstruction |
+| **NSZ (NCZ Solid/Block)** | ✅ Full | ✅ Full | ✅ (via NSP/Dump) | **Byte-Identical** | Streaming zstd decompression |
+| **XCI (HFS0 + Root)** | ✅ Full | ✅ Full | ✅ (via Dump) | **Semantically Lossless** | Secure partition & card header preserved |
+| **XCZ** | ✅ Full | ✅ Full | ✅ (via Dump) | **Semantically Lossless** | Decompresses & packs partitions |
+| **NUP Archive** | ✅ Native | ✅ Native | ✅ Native | **Byte-Identical** | Reference implementation |
+| **Atmosphere LayeredFS** | ✅ Full | ✅ (Patch) | ✅ Full (`--format atmosphere`) | **Intentionally Transformed** | Untouched files remain 100% verified |
+
+---
+
 ## 📥 Downloads & Quick Start
 
 ### 1. Standalone Executable (Windows 10 / 11)

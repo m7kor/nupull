@@ -1,17 +1,32 @@
-name: Build Standalone Release
+name: Build & Verify Standalone Release
 
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to GitHub Releases (manual authorization gate)"
+        required: true
+        type: boolean
+        default: false
+      force_prerelease:
+        description: "Force mark as pre-release"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-windows:
-    name: Build Windows x64 Executable
+  build-and-verify:
+    name: Build & Verify Windows x64 Executable
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -28,25 +43,86 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[gui,dev]
 
-      - name: Build standalone executable with PyInstaller
+      - name: Quality Gate 1: Type Checking (MyPy)
+        run: |
+          python -m mypy --python-version 3.12 tools/nup/nup
+
+      - name: Quality Gate 2: Full Regression Suite
+        run: |
+          python tests/regression.py
+
+      - name: Quality Gate 3: End-to-End Format Validation
+        run: |
+          python tests/e2e_roundtrip.py
+
+      - name: Quality Gate 4: Build Executable with PyInstaller
         run: |
           pyinstaller --noconsole --onefile --name "Nupull" --icon "assets/nupull.ico" --paths "tools/nup" --collect-all nup nup_gui.py
 
-      - name: Verify build artifact
+      - name: Quality Gate 5: Smoke Test Packaged Executable
         run: |
           ./dist/Nupull.exe --smoke --page auto
 
-      - name: Create release zip
+      - name: Generate Checksums & Release Archive
+        shell: pwsh
         run: |
-          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v1.0.1" }
-          Compress-Archive -Path dist/Nupull.exe, README.md, LICENSE -DestinationPath "Nupull-${tag}-windows-x64.zip"
+          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v1.0.2-rc.1" }
+          $zipName = "Nupull-${tag}-windows-x64.zip"
+          Compress-Archive -Path dist/Nupull.exe, README.md, LICENSE -DestinationPath $zipName
+          
+          # Generate SHA256 checksums
+          $exeHash = (Get-FileHash -Algorithm SHA256 dist/Nupull.exe).Hash.ToLower()
+          $zipHash = (Get-FileHash -Algorithm SHA256 $zipName).Hash.ToLower()
+          "$exeHash  Nupull.exe`n$zipHash  $zipName" | Out-File -Encoding ascii dist/SHA256SUMS.txt
+          Copy-Item $zipName dist/
 
-      - name: Upload artifact to GitHub Release
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupull-release-artifacts
+          path: |
+            dist/Nupull.exe
+            dist/Nupull-*-windows-x64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    name: Publish Release
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    permissions:
+      contents: write
+
+    steps:
+      - name: Determine Release Classification
+        id: classify
+        run: |
+          TAG="${GITHUB_REF_NAME:-v1.0.2-rc.1}"
+          echo "Tag: $TAG"
+          # Stable releases match strict semver: vMAJOR.MINOR.PATCH (e.g. v1.0.2)
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ "${{ inputs.force_prerelease }}" != "true" ]]; then
+            echo "Classification: STABLE RELEASE"
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          else
+            echo "Classification: PRE-RELEASE / RELEASE CANDIDATE"
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: nupull-release-artifacts
+          path: release-dist
+
+      - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            dist/Nupull.exe
-            Nupull-*-windows-x64.zip
+            release-dist/Nupull.exe
+            release-dist/Nupull-*-windows-x64.zip
+            release-dist/SHA256SUMS.txt
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.classify.outputs.prerelease == 'true' }}
+          generate_release_notes: true

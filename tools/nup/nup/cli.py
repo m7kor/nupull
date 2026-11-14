@@ -649,10 +649,12 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from . import __version__
     ap = argparse.ArgumentParser(
         prog="nupull",
         description="Nupull — Modern NX Package (NUP) container studio",
     )
+    ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("pack", help="pack a dump directory into an .nup")
