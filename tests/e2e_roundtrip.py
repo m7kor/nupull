@@ -414,9 +414,157 @@ def test_pathway_mod_patching(work_dir: Path, keys_file: Path) -> Tuple[bool, st
     return True, "Passed (INTENTIONALLY TRANSFORMED with 100% untouched integrity)"
 
 
+def test_pathway_nsz_to_nup_to_nsp(work_dir: Path, keys_file: Path) -> Tuple[bool, str]:
+    """Pathway 4: NSZ (NCZ Solid Compression) -> NUP -> NSP Roundtrip."""
+    keyset = Keyset.load(keys_file)
+    tid = 0x0100777788880001
+    nsz_path = work_dir / "test_synth.nsz"
+    conv_nup = work_dir / "nsz_conv.nup"
+    out_nsp_dir = work_dir / "nsz_export_nsp"
+
+    files_dict = {
+        "exefs/main": b"NSO0" + b"\0" * 0x3C + b"\x88" * 0x20,
+        "exefs/main.npdm": b"ACI0" + b"\0" * 0x0C + struct.pack("<Q", tid) + b"\0" * 0x28,
+        "romfs/config.cfg": b"RENDER_SCALE=1.0\nVSYNC=1\nAUDIO_VOLUME=80",
+        "romfs/data.bin": b"STREAMING_BINARY_DATA_BLOCK_" * 1000,
+    }
+
+    # Generate raw NCA components
+    exefs_entries = [(k[6:], v) for k, v in files_dict.items() if k.startswith("exefs/")]
+    romfs_entries = [(k[6:], v) for k, v in files_dict.items() if k.startswith("romfs/")]
+    exefs_blob = _build_pfs0(exefs_entries)
+    romfs_blob = _build_romfs(romfs_entries)
+    prog_nca = _build_synthetic_nca(0, tid, keyset, 1, 2, exefs_blob, 0, 3, romfs_blob)
+    prog_cid = hashlib.sha256(prog_nca[:0x400]).digest()[:16].hex()
+
+    # Turn Program NCA into NCZ: header (0x4000) + NCZSECTN table + zstd body
+    header_part = prog_nca[:0x4000]
+    body_part = prog_nca[0x4000:]
+    cctx = zstandard.ZstdCompressor(level=3)
+    comp_body = cctx.compress(body_part)
+    sec_info = struct.pack("<qqq16s16s", 0x4000, len(body_part), 1, b"\0" * 16, b"\0" * 16)
+    ncz_blob = header_part + b"NCZSECTN" + struct.pack("<q", 1) + sec_info + comp_body
+
+    # Control NCA & Meta CNMT NCA
+    nacp_data = bytearray(0x4000)
+    title_b = b"NSZ Synthetic Adventure"
+    nacp_data[0 : len(title_b)] = title_b
+    ctrl_romfs = _build_romfs([("control.nacp", bytes(nacp_data))])
+    ctrl_nca = _build_synthetic_nca(3, tid, keyset, 0, 3, ctrl_romfs)
+    ctrl_cid = hashlib.sha256(ctrl_nca[:0x400]).digest()[:16].hex()
+
+    cnmt_data = bytearray(0x20 + 0x38 * 2)
+    struct.pack_into("<QIBBH", cnmt_data, 0, tid, 0, 0x80, 0, 0)
+    struct.pack_into("<H", cnmt_data, 0x10, 2)
+    cnmt_data[0x20 + 0x20 : 0x20 + 0x30] = bytes.fromhex(prog_cid)
+    struct.pack_into("<I", cnmt_data, 0x20 + 0x30, len(prog_nca))
+    cnmt_data[0x20 + 0x36] = 1
+    cnmt_data[0x20 + 0x38 + 0x20 : 0x20 + 0x38 + 0x30] = bytes.fromhex(ctrl_cid)
+    struct.pack_into("<I", cnmt_data, 0x20 + 0x38 + 0x30, len(ctrl_nca))
+    cnmt_data[0x20 + 0x38 + 0x36] = 3
+    meta_pfs0 = _build_pfs0([("game.cnmt", bytes(cnmt_data))])
+    meta_nca = _build_synthetic_nca(1, tid, keyset, 1, 2, meta_pfs0)
+
+    # Outer NSZ PFS0
+    nsz_blob = _build_pfs0([
+        (f"{prog_cid}.ncz", ncz_blob),
+        (f"{ctrl_cid}.nca", ctrl_nca),
+        ("game.cnmt.nca", meta_nca),
+    ])
+    nsz_path.write_bytes(nsz_blob)
+
+    # 1. Convert NSZ -> NUP
+    convert(nsz_path, conv_nup, keys_path=keys_file)
+    ok, errs = verify(conv_nup, deep=True)
+    if not ok:
+        return False, f"NSZ converted NUP verification failed: {errs}"
+
+    # 2. Export NUP -> NSP
+    export_container(conv_nup, out_nsp_dir, fmt="nsp", keys_path=keys_file, replace=True)
+    exported_nsps = list(out_nsp_dir.glob("*.nsp"))
+    if not exported_nsps:
+        return False, "NSP export from NSZ-converted NUP produced no .nsp file"
+
+    # 3. Extract and verify file contents byte-identical
+    unpack_dest = work_dir / "nsz_repacked_extracted"
+    unpack(exported_nsps[0], unpack_dest, keys_path=keys_file, replace=True)
+
+    extracted_cfg = unpack_dest / "base" / "romfs" / "config.cfg"
+    extracted_data = unpack_dest / "base" / "romfs" / "data.bin"
+    if not extracted_cfg.is_file() or not extracted_data.is_file():
+        return False, "Extracted files missing from repacked NSP"
+
+    if extracted_cfg.read_bytes() != files_dict["romfs/config.cfg"]:
+        return False, "Extracted config.cfg content mismatch"
+    if extracted_data.read_bytes() != files_dict["romfs/data.bin"]:
+        return False, "Extracted data.bin content mismatch"
+
+    return True, "Passed (NSZ -> NUP -> NSP Roundtrip BYTE-IDENTICAL & LOSSLESS)"
+
+
+def test_pathway_all_in_one_consolidation(work_dir: Path, keys_file: Path) -> Tuple[bool, str]:
+    """Pathway 5: Multi-package Consolidation (Base + DLC) -> All-in-One NUP -> Atmosphere Export."""
+    keyset = Keyset.load(keys_file)
+    base_tid = 0x0100111122220000
+    dlc_tid = 0x0100111122221001
+
+    base_nsp = work_dir / "aio_base.nsp"
+    dlc_nsp = work_dir / "aio_dlc.nsp"
+    aio_nup = work_dir / "aio_consolidated.nup"
+    atmo_out = work_dir / "aio_export_atmo"
+
+    base_files = {
+        "exefs/main": b"NSO0" + b"\0" * 0x3C + b"\x11" * 0x20,
+        "exefs/main.npdm": b"ACI0" + b"\0" * 0x0C + struct.pack("<Q", base_tid) + b"\0" * 0x28,
+        "romfs/game.dat": b"BASE_GAME_MAIN_DATA" * 50,
+    }
+    create_synthetic_nsp(base_nsp, base_tid, keyset, "Base Game Title", base_files)
+
+    # DLC NSP
+    dlc_romfs = _build_romfs([("dlc_costume.bin", b"DLC_PREORDER_COSTUME_PACK_777")])
+    dlc_nca = _build_synthetic_nca(4, dlc_tid, keyset, 0, 3, dlc_romfs)
+    dlc_cid = hashlib.sha256(dlc_nca[:0x400]).digest()[:16].hex()
+
+    dlc_cnmt = bytearray(0x20 + 8 + 0x38)
+    struct.pack_into("<QIBBH", dlc_cnmt, 0, dlc_tid, 0, 0x82, 0, 8)
+    struct.pack_into("<H", dlc_cnmt, 0x10, 1)
+    struct.pack_into("<Q", dlc_cnmt, 0x20, base_tid)
+    dlc_cnmt[0x28 + 0x20 : 0x28 + 0x30] = bytes.fromhex(dlc_cid)
+    struct.pack_into("<I", dlc_cnmt, 0x28 + 0x30, len(dlc_nca))
+    dlc_cnmt[0x28 + 0x36] = 6  # Delta/Addon
+    dlc_meta_pfs0 = _build_pfs0([("addon.cnmt", bytes(dlc_cnmt))])
+    dlc_meta_nca = _build_synthetic_nca(1, dlc_tid, keyset, 1, 2, dlc_meta_pfs0)
+
+    dlc_nsp_blob = _build_pfs0([
+        (f"{dlc_cid}.nca", dlc_nca),
+        ("addon.cnmt.nca", dlc_meta_nca),
+    ])
+    dlc_nsp.write_bytes(dlc_nsp_blob)
+
+    # Convert Base + DLC -> All-in-One NUP
+    convert(base_nsp, aio_nup, dlcs=[dlc_nsp], keys_path=keys_file)
+    ok, errs = verify(aio_nup, deep=True)
+    if not ok:
+        return False, f"All-in-One NUP verification failed: {errs}"
+
+    with NupReader(aio_nup) as r:
+        if len(r.packages) != 2:
+            return False, f"Expected 2 packages in All-in-One NUP, found {len(r.packages)}"
+
+    # Export to Atmosphere
+    export_container(aio_nup, atmo_out, fmt="atmosphere", replace=True)
+    atmo_romfs_file = atmo_out / "atmosphere" / "contents" / f"{base_tid:016X}" / "romfs" / "game.dat"
+    if not atmo_romfs_file.is_file():
+        return False, "Atmosphere export missing base romfs/game.dat"
+    if atmo_romfs_file.read_bytes() != base_files["romfs/game.dat"]:
+        return False, "Atmosphere export game.dat content mismatch"
+
+    return True, "Passed (All-in-One Consolidation Base + DLC SEMANTICALLY LOSSLESS)"
+
+
 def run_full_e2e_suite() -> bool:
     print("================================================================================")
-    print(" NUPULL PHASE IV END-TO-END CONVERSION & COMPATIBILITY VALIDATOR")
+    print(" NUPULL PHASE V END-TO-END CONVERSION & COMPATIBILITY VALIDATOR")
     print("================================================================================")
     work = Path(tempfile.mkdtemp(prefix="nup_e2e_"))
     try:
@@ -425,6 +573,8 @@ def run_full_e2e_suite() -> bool:
             ("Pathway 1: NSP -> NUP -> NSP (Lossless Roundtrip)", lambda: test_roundtrip_nsp_nup_nsp(work, keys_file)),
             ("Pathway 2: XCI -> NUP -> Dump (Multi-Partition & Secure)", lambda: test_pathway_xci_to_nup_to_dump(work, keys_file)),
             ("Pathway 3: Atmosphere LayeredFS Mod Patching", lambda: test_pathway_mod_patching(work, keys_file)),
+            ("Pathway 4: NSZ -> NUP -> NSP (Solid NCZ Decompression)", lambda: test_pathway_nsz_to_nup_to_nsp(work, keys_file)),
+            ("Pathway 5: Multi-Package All-in-One Consolidation", lambda: test_pathway_all_in_one_consolidation(work, keys_file)),
         ]
 
         all_ok = True

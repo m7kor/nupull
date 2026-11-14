@@ -44,7 +44,29 @@ class _RangeReader(io.RawIOBase):
         size = min(size, self._end - self._pos)
         if size <= 0:
             return b""
-        data = self._read_at(self._pos, size)
+        try:
+            data = self._read_at(self._pos, size)
+        except UnpackError as e:
+            if "read out of range" in str(e) and size > 1:
+                # Bounded slice reached: probe exact remaining bytes
+                low = 1
+                high = size - 1
+                best = b""
+                while low <= high:
+                    mid = (low + high) // 2
+                    try:
+                        d = self._read_at(self._pos, mid)
+                        best = d
+                        low = mid + 1
+                    except UnpackError:
+                        high = mid - 1
+                if best:
+                    self._pos += len(best)
+                    self._end = self._pos
+                    return best
+                self._end = self._pos
+                return b""
+            raise
         self._pos += len(data)
         return data
 
@@ -64,6 +86,7 @@ def ncz_to_nca(
     nca_off: int,
     dest: Path,
     *,
+    nca_size: int | None = None,
     on_progress: Callable[[int], None] | None = None,
     cancel: Callable[[], bool] | None = None,
 ) -> int:
@@ -132,8 +155,10 @@ def ncz_to_nca(
                         read_at, nca_off + body_start, out,
                         on_progress=on_progress, check=check)
                 else:
+                    body_end = (nca_off + nca_size) if nca_size is not None else None
                     written += _decompress_solid(
                         read_at, nca_off + body_start,
+                        body_end=body_end,
                         on_progress=on_progress, check=check, out=out)
             except zstandard.ZstdError as exc:
                 raise UnpackError(f"NCZ zstd decode failed: {exc}") from exc
@@ -158,12 +183,14 @@ def _decompress_solid(
     read_at: ReadAt,
     body_off: int,
     *,
+    body_end: int | None = None,
     out: io.BufferedWriter,
     on_progress: Callable[[int], None] | None,
     check: Callable[[], None],
     max_size: int = 128 << 30,
 ) -> int:
-    src = _RangeReader(read_at, body_off, body_off + (1 << 62))
+    end_pos = body_end if body_end is not None else (body_off + (1 << 62))
+    src = _RangeReader(read_at, body_off, end_pos)
     dctx = zstandard.ZstdDecompressor()
     reader = dctx.stream_reader(cast(IO[bytes], src))
     total = 0

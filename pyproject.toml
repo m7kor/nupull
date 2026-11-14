@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nupull"
-version = "1.0.1"
+version = "1.0.2-rc.1"
 description = "Modern NX container studio, batch converter, mod patcher, and exporter for Nintendo Switch 1/2"
 readme = "README.md"
 authors = [{ name = "m7kor" }]

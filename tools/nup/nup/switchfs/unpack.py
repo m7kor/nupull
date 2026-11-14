@@ -542,7 +542,7 @@ def _get_base_romfs_reader(
         entry_read = _slice_reader(base_fh, entry)
         if is_ncz(entry_read, 0, entry.size) or entry.name.lower().endswith(".ncz"):
             temp_nca = out_dir / f".tmp_{os.getpid()}_{entry.name}.nca"
-            ncz_to_nca(entry_read, 0, temp_nca, cancel=sink._cancel)
+            ncz_to_nca(entry_read, 0, temp_nca, nca_size=entry.size, cancel=sink._cancel)
             decomp_fh = _open_file(temp_nca)
             fhs.append(decomp_fh)
             dec_size = os.path.getsize(temp_nca)
@@ -751,6 +751,7 @@ def _extract_work(
                 entry_read,
                 0,
                 temp_path,
+                nca_size=work.entry.size,
                 on_progress=lambda n: sink.check(),
                 cancel=sink._cancel,
             )

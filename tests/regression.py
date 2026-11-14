@@ -1230,6 +1230,26 @@ if exported_nsps:
         nsp_header = nsp_fh.read(0x10)
         check(nsp_header.startswith(b"PFS0"), "exported streaming NSP has valid PFS0 magic")
 
+# 15. NCZ solid decompression handles bounded slices without out-of-range error
+from nup.switchfs.ncz import ncz_to_nca
+small_hdr = b"\0" * 0x4000
+small_payload = b"SMALL_COMPRESSED_PAYLOAD_TEST_" * 50
+cctx_sml = zstandard.ZstdCompressor(level=1)
+comp_sml = cctx_sml.compress(small_payload)
+sml_sec = struct.pack("<qqq16s16s", 0x4000, len(small_payload), 1, b"\0" * 16, b"\0" * 16)
+ncz_sml_bytes = small_hdr + b"NCZSECTN" + struct.pack("<q", 1) + sml_sec + comp_sml
+
+# Bounded reader that strictly raises UnpackError if reading past end of ncz_sml_bytes
+def bounded_ncz_reader(off: int, n: int) -> bytes:
+    if off + n > len(ncz_sml_bytes):
+        raise UnpackError(f"read out of range 0x{off:x}+0x{n:x}")
+    return ncz_sml_bytes[off:off + n]
+
+sml_decomp_out = Path(work) / "sml_decomp.nca"
+ncz_to_nca(bounded_ncz_reader, 0, sml_decomp_out, nca_size=len(ncz_sml_bytes))
+check(sml_decomp_out.is_file() and sml_decomp_out.stat().st_size == 0x4000 + len(small_payload),
+      "ncz_to_nca solid decompression succeeds on bounded slice with small payload")
+
 # ---------- summary ----------
 print()
 if fails:

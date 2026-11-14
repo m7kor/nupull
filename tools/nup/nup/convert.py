@@ -312,7 +312,7 @@ def convert(
             if is_ncz_content:
                 temp_path = out_p.parent / f".tmp_{os.getpid()}_{work.entry.name}.nca"
                 temp_files.append(temp_path)
-                ncz_to_nca(entry_read, 0, temp_path, cancel=cancel)
+                ncz_to_nca(entry_read, 0, temp_path, nca_size=work.entry.size, cancel=cancel)
                 decomp_fh = _open_file(temp_path)
                 open_handles.append(decomp_fh)
                 dec_size = os.path.getsize(temp_path)
