@@ -19,7 +19,7 @@ except Exception:
     _EMBEDDED_COMMIT = None
 
 # Baked fallback commit SHA when running without git and without embedded metadata
-BUILD_COMMIT: str = "1aed649d364ef6ebdaf38cffbd8c729b96cfbbee"
+BUILD_COMMIT: str = "32333dd4abe4ed09a2b13e629eaab58e748e3524"
 
 
 def get_git_commit() -> str:

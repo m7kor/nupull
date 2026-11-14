@@ -17,10 +17,9 @@ on:
         type: string
         default: "v1.0.2-rc.1"
       expected_commit:
-        description: "Exact approved commit SHA to publish"
+        description: "Exact approved commit SHA to publish (must match checked out commit)"
         required: true
         type: string
-        default: "937e73104a45d1d0b08bd32ca057c9cf37ebe393"
       force_prerelease:
         description: "Force mark as pre-release"
         required: false
@@ -69,15 +68,47 @@ jobs:
         run: |
           python -m unittest tests/test_ncz_stream.py
 
+      - name: "Quality Gate 4.5: Generate Build Metadata"
+        shell: pwsh
+        run: |
+          $commit = (git rev-parse HEAD).Trim()
+          Write-Host "Embedding Git commit into build metadata: $commit"
+          python -c "import sys; open('tools/nup/nup/_build_meta.py', 'w', encoding='utf-8').write(f'COMMIT = \"{sys.argv[1]}\"\n')" $commit
+          Get-Content tools/nup/nup/_build_meta.py
+
       - name: "Quality Gate 5: Build Executable with PyInstaller"
         run: |
-          pyinstaller --noconsole --onefile --name "Nupull" --icon "assets/nupull.ico" --paths "tools/nup" --collect-all nup nup_gui.py
+          pyinstaller --noconsole --onefile --name "Nupull" --icon "assets/nupull.ico" --paths "tools/nup" --hidden-import "nup._build_meta" --collect-all nup nup_gui.py
 
-      - name: "Quality Gate 6: Smoke Test Packaged Executable"
+      - name: "Quality Gate 6: Verify Binary Build Metadata and Smoke Test"
+        shell: pwsh
         run: |
-          ./dist/Nupull.exe --version
-          ./dist/Nupull.exe --build-info
-          ./dist/Nupull.exe --smoke --page auto
+          $expectedCommit = (git rev-parse HEAD).Trim()
+          Write-Host "Expected Git Commit: $expectedCommit"
+          
+          # Inspect version and build info with provenance assertion
+          python -c "import subprocess, sys, re
+          expected = sys.argv[1].strip()
+          r_ver = subprocess.run(['dist/Nupull.exe', '--version'], capture_output=True, text=True, errors='replace')
+          print('Executable Version Output:', r_ver.stdout.strip())
+          
+          r_info = subprocess.run(['dist/Nupull.exe', '--build-info'], capture_output=True, text=True, errors='replace')
+          print(r_info.stdout)
+          
+          m = re.search(r'Source Commit\s*:\s*([a-f0-9]{40})', r_info.stdout)
+          if not m:
+              sys.exit('CRITICAL: Failed to parse 40-character Source Commit from --build-info output!')
+          embedded = m.group(1).strip()
+          if embedded != expected:
+              sys.exit(f'CRITICAL: Embedded commit ({embedded}) does not match expected Git HEAD ({expected})!')
+          print(f'PROVENANCE VERIFIED: Executable embedded commit matches Git HEAD exactly ({embedded}).')
+          
+          r_smoke = subprocess.run(['dist/Nupull.exe', '--smoke', '--page', 'auto'], capture_output=True, text=True, errors='replace')
+          print(r_smoke.stdout)
+          if 'SMOKE-OK loaded=True' not in r_smoke.stdout:
+              sys.exit('CRITICAL: Packaged executable failed GUI smoke test!')
+          print('GUI SMOKE TEST PASSED.')
+          " $expectedCommit
 
       - name: Generate Checksums & Release Archive
         shell: pwsh
@@ -121,33 +152,51 @@ jobs:
       - name: Determine & Validate Release Classification
         id: classify
         run: |
-          TAG="${GITHUB_REF_NAME:-v1.0.2-rc.1}"
-          echo "Processing Tag: $TAG"
+          TAG="${GITHUB_REF_NAME}"
+          echo "Processing Ref Name: $TAG"
+          echo "Full Ref: $GITHUB_REF"
+          echo "Current Commit SHA: $GITHUB_SHA"
 
-          # 1. Verify approved tag matches workflow input
+          # 1. Guard against branch execution (e.g. running against main or dev branch)
+          if [ "$TAG" = "main" ] || [ "$TAG" = "master" ] || [[ "$GITHUB_REF" == refs/heads/* ]]; then
+            echo "::error::Cannot publish release from a branch ('$TAG'). The workflow must be dispatched against the approved release tag (e.g. refs/tags/v1.0.2-rc.1)."
+            exit 1
+          fi
+
+          # 2. Verify approved tag matches workflow input
           EXPECTED_INPUT_TAG="${{ github.event.inputs.expected_tag }}"
-          if [ -n "$EXPECTED_INPUT_TAG" ] && [ "$TAG" != "$EXPECTED_INPUT_TAG" ]; then
+          if [ -z "$EXPECTED_INPUT_TAG" ]; then
+            echo "::error::Input 'expected_tag' is required and must not be empty"
+            exit 1
+          fi
+          if [ "$TAG" != "$EXPECTED_INPUT_TAG" ]; then
             echo "::error::Target Tag '$TAG' does not match explicitly approved input tag '$EXPECTED_INPUT_TAG'"
             exit 1
           fi
 
-          # 2. Verify approved commit SHA
+          # 3. Verify approved commit SHA
           EXPECTED_INPUT_COMMIT="${{ github.event.inputs.expected_commit }}"
-          ACTUAL_COMMIT="${GITHUB_SHA}"
-          if [ -n "$EXPECTED_INPUT_COMMIT" ] && [ "$ACTUAL_COMMIT" != "$EXPECTED_INPUT_COMMIT" ]; then
-            echo "::error::Current commit '$ACTUAL_COMMIT' does not match explicitly approved commit '$EXPECTED_INPUT_COMMIT'"
+          if [ -z "$EXPECTED_INPUT_COMMIT" ]; then
+            echo "::error::Input 'expected_commit' is required and must not be empty"
+            exit 1
+          fi
+          if [ "$GITHUB_SHA" != "$EXPECTED_INPUT_COMMIT" ]; then
+            echo "::error::Current commit '$GITHUB_SHA' does not match explicitly approved commit '$EXPECTED_INPUT_COMMIT'"
             exit 1
           fi
 
-          # 3. Extract package version from source code
+          # 4. Extract package version from source code
           PKG_VER=$(python3 -c "import re; m = re.search(r'__version__\s*=\s*[\"\']([^\"\']+)[\"\']', open('tools/nup/nup/__init__.py').read()); print(m.group(1) if m else '')")
-          echo "Package Version: $PKG_VER"
+          echo "Package Version from source: $PKG_VER"
           if [ -z "$PKG_VER" ]; then
             echo "::error::Failed to extract package version from tools/nup/nup/__init__.py"
             exit 1
           fi
 
-          # 4. Strict SemVer validation
+          # Export tag to outputs for release action
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          # 5. Strict SemVer validation
           # Stable release pattern: vX.Y.Z
           if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             EXPECTED_TAG="v${PKG_VER}"
@@ -203,6 +252,8 @@ jobs:
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@c062e496a77e5e3d744b15096530a59918d36eb8 # v2.2.1
         with:
+          tag_name: ${{ steps.classify.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: |
             release-dist/Nupull.exe
             release-dist/Nupull-*-windows-x64.zip
