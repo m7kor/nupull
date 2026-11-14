@@ -31,6 +31,11 @@ ProgressFn = Callable[[Progress], None]
 CancelFn = Callable[[], bool]
 
 _BAD_FILENAME_CHARS: Final = r'<>:"/\|?*'
+_WIN_RESERVED: Final = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
 
 
 def _sanitize_filename(name: str) -> str:
@@ -39,13 +44,17 @@ def _sanitize_filename(name: str) -> str:
 
 
 def _safe_export_path(base_dir: Path, rel: str) -> Path:
-    """Resolve `rel` relative to `base_dir`, strictly guarding against traversal."""
-    if not rel or rel.startswith(("/", "\\")) or ":" in rel:
+    """Resolve `rel` relative to `base_dir`, strictly guarding against traversal and device names."""
+    if not rel or rel.startswith(("/", "\\")) or ":" in rel or "\0" in rel:
         raise F.NupError(f"export: unsafe file path in container: {rel!r}")
     normalized = rel.replace("\\", "/")
     parts = normalized.split("/")
-    if any(p in ("..", ".", "") or ":" in p for p in parts):
-        raise F.NupError(f"export: unsafe file path in container: {rel!r}")
+    for p in parts:
+        if p in ("..", ".", "") or ":" in p or "\0" in p:
+            raise F.NupError(f"export: unsafe file path in container: {rel!r}")
+        if os.name == "nt":
+            if p.split(".", 1)[0].upper() in _WIN_RESERVED or p != p.rstrip(" ."):
+                raise F.NupError(f"export: unsafe Windows device name or trailing space/dot in path: {rel!r}")
     target = base_dir.joinpath(*parts)
     try:
         target.resolve().relative_to(base_dir.resolve())
@@ -117,40 +126,57 @@ def _resolve_target_package(
     return packages[0]
 
 
-def _build_pfs0(files: list[tuple[str, bytes]]) -> bytes:
-    """Build a standard Nintendo PFS0 filesystem blob."""
+def _build_pfs0_header(files: list[tuple[str, int]]) -> tuple[bytes, list[tuple[int, int]], int]:
+    """Build a standard Nintendo PFS0 header without file data.
+
+    Returns (header_bytes, layout, total_size).
+    """
     count = len(files)
     str_table = bytearray()
     offsets = []
-    for name, data in files:
+    for name, _ in files:
         offsets.append(len(str_table))
         str_table.extend(name.encode("utf-8") + b"\0")
     hdr = bytearray(0x10 + count * 0x18 + len(str_table))
     hdr[0:4] = b"PFS0"
     struct.pack_into("<III", hdr, 4, count, len(str_table), 0)
-    data_blobs = bytearray()
-    for i, ((name, data), str_off) in enumerate(zip(files, offsets)):
+    layout: list[tuple[int, int]] = []
+    cur_data_off = 0
+    for i, ((name, size), str_off) in enumerate(zip(files, offsets)):
         pos = 0x10 + i * 0x18
-        data_off = len(data_blobs)
-        data_size = len(data)
-        struct.pack_into("<QQII", hdr, pos, data_off, data_size, str_off, 0)
-        data_blobs.extend(data)
+        struct.pack_into("<QQII", hdr, pos, cur_data_off, size, str_off, 0)
+        layout.append((cur_data_off, size))
+        cur_data_off += size
     hdr[0x10 + count * 0x18 : 0x10 + count * 0x18 + len(str_table)] = str_table
+    total_size = len(hdr) + cur_data_off
+    return bytes(hdr), layout, total_size
+
+
+def _build_pfs0(files: list[tuple[str, bytes]]) -> bytes:
+    """Build a standard Nintendo PFS0 filesystem blob."""
+    specs = [(name, len(data)) for name, data in files]
+    hdr, layout, _ = _build_pfs0_header(specs)
+    data_blobs = bytearray()
+    for (name, data), (off, size) in zip(files, layout):
+        data_blobs.extend(data)
     return bytes(hdr + data_blobs)
 
 
-def _build_romfs(files: list[tuple[str, bytes]]) -> bytes:
-    """Build a standard Nintendo RomFS (IVFC level 5) filesystem blob."""
+def _build_romfs_meta_and_layout(files: list[tuple[str, int]]) -> tuple[bytes, list[tuple[int, int]], int]:
+    """Build RomFS header and metadata tables without file data.
+
+    Returns (meta_blob, layout, total_romfs_size).
+    """
     first_file = 0 if files else 0xFFFFFFFF
     dirs = struct.pack("<IIIIII", 0, 0xFFFFFFFF, 0xFFFFFFFF, first_file, 0, 0)
     file_meta = bytearray()
-    data_blob = bytearray()
-    for i, (name, content) in enumerate(files):
-        foff = len(data_blob)
-        fsize = len(content)
-        data_blob.extend(content)
-        pad = (16 - (len(data_blob) % 16)) % 16
-        data_blob.extend(b"\0" * pad)
+    layout: list[tuple[int, int]] = []
+    current_data_off = 0
+    for i, (name, fsize) in enumerate(files):
+        foff = current_data_off
+        layout.append((foff, fsize))
+        pad = (16 - (fsize % 16)) % 16
+        current_data_off += fsize + pad
         name_bytes = name.encode("utf-8")
         next_file = 0xFFFFFFFF if i == len(files) - 1 else len(file_meta) + ((32 + len(name_bytes) + 3) & ~3)
         entry = bytearray(struct.pack("<IIQQII", 0, next_file, foff, fsize, 0, len(name_bytes)))
@@ -175,8 +201,20 @@ def _build_romfs(files: list[tuple[str, bytes]]) -> bytes:
     total.extend(file_meta)
     while len(total) < data_off:
         total.append(0)
-    total.extend(data_blob)
-    return bytes(total)
+    total_romfs_size = data_off + current_data_off
+    return bytes(total), layout, total_romfs_size
+
+
+def _build_romfs(files: list[tuple[str, bytes]]) -> bytes:
+    """Build a standard Nintendo RomFS (IVFC level 5) filesystem blob."""
+    specs = [(name, len(data)) for name, data in files]
+    meta_blob, layout, _ = _build_romfs_meta_and_layout(specs)
+    data_blob = bytearray()
+    for (name, content), (foff, fsize) in zip(files, layout):
+        data_blob.extend(content)
+        pad = (16 - (len(data_blob) % 16)) % 16
+        data_blob.extend(b"\0" * pad)
+    return bytes(meta_blob + data_blob)
 
 
 def _xts_encrypt(key32: bytes, data: bytes, sector: int = 0) -> bytes:
@@ -189,18 +227,21 @@ def _xts_encrypt(key32: bytes, data: bytes, sector: int = 0) -> bytes:
     return bytes(out)
 
 
-def _build_nca(
+def _build_nca_header(
     content_type: int,
     title_id: int,
     keyset: Keyset | None,
     sec0_part: int,
     sec0_fs: int,
-    sec0_data: bytes,
+    sec0_size: int,
     sec1_part: int | None = None,
     sec1_fs: int | None = None,
-    sec1_data: bytes = b"",
-) -> bytes:
-    """Build a standard Nintendo NCA3 container."""
+    sec1_size: int = 0,
+) -> tuple[bytes, int, int]:
+    """Build and encrypt standard Nintendo NCA3 0xC00 header.
+
+    Returns (enc_hdr, s0_cnt, s1_cnt).
+    """
     hdr = bytearray(0xC00)
     hdr[0x200:0x204] = b"NCA3"
     hdr[0x205] = content_type
@@ -216,39 +257,63 @@ def _build_nca(
             pass
 
     s0_start = 6
-    s0_cnt = (len(sec0_data) + 0x1FF) // 0x200
+    s0_cnt = (sec0_size + 0x1FF) // 0x200
     struct.pack_into("<II", hdr, 0x240, s0_start, s0_start + s0_cnt)
     hdr[0x402] = sec0_part
     hdr[0x403] = sec0_fs
     hdr[0x404] = 1
     if sec0_part == 1 and sec0_fs == 2:
-        struct.pack_into("<QQ", hdr, 0x408 + 0x38, 0, len(sec0_data))
+        struct.pack_into("<QQ", hdr, 0x408 + 0x38, 0, sec0_size)
     elif sec0_part == 0 and sec0_fs == 3:
         struct.pack_into("<Q", hdr, 0x408 + 0x88, 0)
-    body = bytearray(sec0_data)
-    while len(body) % 0x200 != 0:
-        body.append(0)
+
+    s1_cnt = 0
     if sec1_part is not None and sec1_fs is not None:
         s1_start = s0_start + s0_cnt
-        s1_cnt = (len(sec1_data) + 0x1FF) // 0x200
+        s1_cnt = (sec1_size + 0x1FF) // 0x200
         struct.pack_into("<II", hdr, 0x250, s1_start, s1_start + s1_cnt)
         hdr[0x602] = sec1_part
         hdr[0x603] = sec1_fs
         hdr[0x604] = 1
         if sec1_part == 1 and sec1_fs == 2:
-            struct.pack_into("<QQ", hdr, 0x608 + 0x38, 0, len(sec1_data))
+            struct.pack_into("<QQ", hdr, 0x608 + 0x38, 0, sec1_size)
         elif sec1_part == 0 and sec1_fs == 3:
             struct.pack_into("<Q", hdr, 0x608 + 0x88, 0)
-        b1 = bytearray(sec1_data)
-        while len(b1) % 0x200 != 0:
-            b1.append(0)
-        body.extend(b1)
 
     header_key = getattr(keyset, "header_key", None) if keyset is not None else None
     if header_key is not None and len(header_key) == 32:
         enc_hdr = _xts_encrypt(header_key, bytes(hdr))
     else:
         enc_hdr = bytes(hdr)
+    return enc_hdr, s0_cnt, s1_cnt
+
+
+def _build_nca(
+    content_type: int,
+    title_id: int,
+    keyset: Keyset | None,
+    sec0_part: int,
+    sec0_fs: int,
+    sec0_data: bytes,
+    sec1_part: int | None = None,
+    sec1_fs: int | None = None,
+    sec1_data: bytes = b"",
+) -> bytes:
+    """Build a standard Nintendo NCA3 container in memory."""
+    enc_hdr, s0_cnt, s1_cnt = _build_nca_header(
+        content_type, title_id, keyset,
+        sec0_part, sec0_fs, len(sec0_data),
+        sec1_part, sec1_fs, len(sec1_data),
+    )
+    body = bytearray(sec0_data)
+    while len(body) % 0x200 != 0:
+        body.append(0)
+    if sec1_part is not None and sec1_fs is not None:
+        b1 = bytearray(sec1_data)
+        while len(b1) % 0x200 != 0:
+            b1.append(0)
+        body.extend(b1)
+    return enc_hdr + bytes(body)
     return enc_hdr + bytes(body)
 
 
@@ -459,31 +524,49 @@ def export_container(
             # 1. Gather ExeFS & RomFS files
             pkg_files = _collect_package_files(r, target_pkg.root_dir)
             exefs_files: list[tuple[str, bytes]] = []
-            romfs_files: list[tuple[str, bytes]] = []
+            romfs_specs: list[tuple[str, int, int]] = []  # (rel_name, size, file_index)
 
             for rel, fi in pkg_files:
                 check_cancel()
                 if rel.startswith("exefs/"):
                     exefs_files.append((rel[6:], r.read_file(fi)))
                 elif rel.startswith("romfs/"):
-                    romfs_files.append((rel[6:], r.read_file(fi)))
+                    romfs_specs.append((rel[6:], r.files[fi][1], fi))
 
             exefs_blob = _build_pfs0(exefs_files) if exefs_files else b""
-            romfs_blob = _build_romfs(romfs_files) if romfs_files else b""
+            exefs_pad = (0x200 - (len(exefs_blob) % 0x200)) % 0x200 if exefs_blob else 0
 
-            prog.current = "Building Program NCA"
+            if romfs_specs:
+                romfs_meta, romfs_layout, total_romfs_size = _build_romfs_meta_and_layout(
+                    [(name, sz) for name, sz, _ in romfs_specs]
+                )
+                romfs_pad = (0x200 - (total_romfs_size % 0x200)) % 0x200
+            else:
+                romfs_meta, romfs_layout, total_romfs_size = b"", [], 0
+                romfs_pad = 0
+
+            prog.current = "Building Program NCA Header"
             if progress:
                 progress(prog)
 
-            # 2. Program NCA
-            if exefs_blob and romfs_blob:
-                prog_nca = _build_nca(0, target_pkg.title_id, keyset, 1, 2, exefs_blob, 0, 3, romfs_blob)
+            # 2. Program NCA Header
+            if exefs_blob and total_romfs_size:
+                prog_nca_hdr, s0_cnt, s1_cnt = _build_nca_header(
+                    0, target_pkg.title_id, keyset, 1, 2, len(exefs_blob), 0, 3, total_romfs_size
+                )
+                prog_nca_size = 0xC00 + s0_cnt * 0x200 + s1_cnt * 0x200
             elif exefs_blob:
-                prog_nca = _build_nca(0, target_pkg.title_id, keyset, 1, 2, exefs_blob)
+                prog_nca_hdr, s0_cnt, _ = _build_nca_header(
+                    0, target_pkg.title_id, keyset, 1, 2, len(exefs_blob)
+                )
+                prog_nca_size = 0xC00 + s0_cnt * 0x200
             else:
-                prog_nca = _build_nca(0, target_pkg.title_id, keyset, 0, 3, romfs_blob)
+                prog_nca_hdr, s0_cnt, _ = _build_nca_header(
+                    0, target_pkg.title_id, keyset, 0, 3, total_romfs_size
+                )
+                prog_nca_size = 0xC00 + s0_cnt * 0x200
 
-            prog_cid = hashlib.sha256(prog_nca[:0x400]).digest()[:16].hex()
+            prog_cid = hashlib.sha256(prog_nca_hdr[:0x400]).digest()[:16].hex()
 
             # 3. Control NCA (NACP + Icons)
             prog.current = "Building Control NCA"
@@ -513,7 +596,7 @@ def export_container(
             struct.pack_into("<H", cnmt_data, 0x10, 2)
             # Program entry
             cnmt_data[0x20 + 0x20 : 0x20 + 0x30] = bytes.fromhex(prog_cid)
-            struct.pack_into("<I", cnmt_data, 0x20 + 0x30, len(prog_nca))
+            struct.pack_into("<I", cnmt_data, 0x20 + 0x30, prog_nca_size)
             cnmt_data[0x20 + 0x36] = 1  # Program
             # Control entry
             cnmt_data[0x20 + 0x38 + 0x20 : 0x20 + 0x38 + 0x30] = bytes.fromhex(ctrl_cid)
@@ -523,25 +606,75 @@ def export_container(
             meta_pfs0 = _build_pfs0([("game.cnmt", bytes(cnmt_data))])
             meta_nca = _build_nca(1, target_pkg.title_id, keyset, 1, 2, meta_pfs0)
 
-            # 5. Assemble final NSP (PFS0)
-            prog.current = "Packaging final NSP"
+            # 5. Assemble final NSP (PFS0) via Bounded Streaming
+            prog.current = "Packaging final NSP (streaming)"
             if progress:
                 progress(prog)
 
-            nsp_files = [
-                (f"{prog_cid}.nca", prog_nca),
-                (f"{ctrl_cid}.nca", ctrl_nca),
-                ("game.cnmt.nca", meta_nca),
+            nsp_specs = [
+                (f"{prog_cid}.nca", prog_nca_size),
+                (f"{ctrl_cid}.nca", len(ctrl_nca)),
+                ("game.cnmt.nca", len(meta_nca)),
             ]
-            nsp_blob = _build_pfs0(nsp_files)
+            outer_pfs0_hdr, _, total_nsp_size = _build_pfs0_header(nsp_specs)
+
+            total_bytes_to_export = total_nsp_size
+            prog.bytes_total = total_bytes_to_export
+            prog.bytes_done = 0
+            bytes_written = 0
 
             try:
-                part_nsp_path.write_bytes(nsp_blob)
+                with open(part_nsp_path, "wb") as out_fh:
+                    # Write outer PFS0 header
+                    out_fh.write(outer_pfs0_hdr)
+                    bytes_written += len(outer_pfs0_hdr)
+
+                    # Program NCA: header
+                    out_fh.write(prog_nca_hdr)
+                    bytes_written += len(prog_nca_hdr)
+
+                    # Program NCA: ExeFS section
+                    if exefs_blob:
+                        out_fh.write(exefs_blob)
+                        bytes_written += len(exefs_blob)
+                        if exefs_pad:
+                            out_fh.write(b"\x00" * exefs_pad)
+                            bytes_written += exefs_pad
+
+                    # Program NCA: RomFS section
+                    if romfs_specs:
+                        out_fh.write(romfs_meta)
+                        bytes_written += len(romfs_meta)
+                        for (name, fsize, fi), (foff, _) in zip(romfs_specs, romfs_layout):
+                            check_cancel()
+                            r.extract_file_to(fi, out_fh, chunk_size=1024 * 1024)
+                            bytes_written += fsize
+                            fpad = (16 - (fsize % 16)) % 16
+                            if fpad:
+                                out_fh.write(b"\x00" * fpad)
+                                bytes_written += fpad
+                            prog.bytes_done = bytes_written
+                            prog.current = f"romfs/{name}"
+                            if progress:
+                                progress(prog)
+                        if romfs_pad:
+                            out_fh.write(b"\x00" * romfs_pad)
+                            bytes_written += romfs_pad
+
+                    # Control NCA
+                    out_fh.write(ctrl_nca)
+                    bytes_written += len(ctrl_nca)
+
+                    # Meta CNMT NCA
+                    out_fh.write(meta_nca)
+                    bytes_written += len(meta_nca)
+
                 os.replace(part_nsp_path, final_nsp_path)
             finally:
                 part_nsp_path.unlink(missing_ok=True)
 
             prog.stage = "done"
+            prog.bytes_done = bytes_written
             if progress:
                 progress(prog)
 
@@ -551,7 +684,7 @@ def export_container(
                 format="nsp",
                 package_title_id=target_pkg.title_id,
                 files_exported=len(pkg_files),
-                bytes_exported=len(nsp_blob),
+                bytes_exported=bytes_written,
             )
 
         else:

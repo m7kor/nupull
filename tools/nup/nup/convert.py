@@ -356,10 +356,7 @@ def convert(
             sec_romfs = nca.romfs_section()
             if sec_romfs is not None and work.nca_type != _NTYPE_CONTROL:
                 if sec_romfs.is_bktr:
-                    # Update BKTR RomFS
-                    cur_files = update_files_by_version.setdefault(work.pkg_version, [])
-                    update_reader = nca.reader(sec_romfs)
-                    tables = load_bktr(update_reader)
+                    # Update BKTR RomFS: must resolve base before parsing BKTR tables
                     base_reader_fn: SectionReader | None = active_base_romfs_readers.get(work.base_id)
                     if base_reader_fn is None:
                         # Fallback: resolve base from external file
@@ -372,13 +369,20 @@ def convert(
                             if base_handle.temp_path:
                                 temp_files.append(base_handle.temp_path)
                             base_reader_fn = base_handle.reader
+                        else:
+                            raise UnpackError(
+                                f"update requires base game (title ID 0x{work.base_id:016X}) "
+                                f"to merge BKTR RomFS, but base game was not found (use --base)"
+                            )
 
-                    if base_reader_fn is not None:
-                        bktr_reader = BktrReader(update_reader, base_reader_fn, tables)
-                        romfs = RomFs(bktr_reader.read_at, sec_romfs.ivfc_level5_offset)
-                        for rf in romfs.files():
-                            sub_read = SliceReader(bktr_reader.read_at, rf.offset, rf.size).read_at
-                            cur_files.append((f"romfs/{rf.path}", sub_read, rf.size))
+                    cur_files = update_files_by_version.setdefault(work.pkg_version, [])
+                    update_reader = nca.reader(sec_romfs)
+                    tables = load_bktr(update_reader)
+                    bktr_reader = BktrReader(update_reader, base_reader_fn, tables)
+                    romfs = RomFs(bktr_reader.read_at, sec_romfs.ivfc_level5_offset)
+                    for rf in romfs.files():
+                        sub_read = SliceReader(bktr_reader.read_at, rf.offset, rf.size).read_at
+                        cur_files.append((f"romfs/{rf.path}", sub_read, rf.size))
                 elif work.nca_type in (_NTYPE_DATA, _NTYPE_PUBLIC_DATA) and (not base_files or work.pkg_title_id != base_pkg_info.get("title_id")):
                     # Addon (DLC)
                     r_romfs = nca.reader(sec_romfs)

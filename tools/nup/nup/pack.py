@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from pathlib import Path
 import struct
 import sys
 from typing import IO, TYPE_CHECKING, TypedDict
@@ -24,6 +25,7 @@ except ImportError:  # pragma: no cover
 from . import format as F
 from . import meta as M
 from .discover import ARTIFACT_NAMES, DirObj, FILE_TAG, FileObj, PackInput, Tree, discover
+from .switchfs.errors import CancelledError
 
 if TYPE_CHECKING:
     from .discover import FileObj
@@ -130,11 +132,14 @@ def _write_extents(
     zc: zstandard.ZstdCompressor | None,
     blob_cursor: int,
     progress: Callable[[int, int, FileObj], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
 ) -> int:
     """Append file extents (dedup by hash, 16-byte aligned). Returns end offset."""
     total = len(tree.files)
     seen: dict[bytes, tuple[int, int, int]] = {}  # sha256 -> (offset, size, codec)
     for i, fnode in enumerate(tree.files):
+        if cancel is not None and cancel():
+            raise CancelledError("pack cancelled")
         with _StreamFile(fnode) as fh:
             if fnode.read_at is None:
                 fnode.size = os.path.getsize(fnode.src_path)
@@ -342,8 +347,8 @@ def out_inside_src(out_path: str, src: str) -> bool:
 
 
 def pack(
-    out_path: str,
-    src: str,
+    out_path: str | Path,
+    src: str | Path,
     *,
     level: int = 3,
     keep_listings: bool = False,
@@ -356,6 +361,7 @@ def pack(
     replace: bool = False,
     progress: Callable[[int, int, FileObj], None] | None = None,
     threads: int = 0,
+    cancel: Callable[[], bool] | None = None,
 ) -> list[PackInput]:
     """Pack `src` into `out_path` (or one container per group with `split`).
 
@@ -366,6 +372,8 @@ def pack(
     `replace=True` allows an existing output - the old file is swapped
     atomically only after the new one is complete.
     """
+    out_path = str(out_path)
+    src = str(src)
     if not have_zstd():
         print("pack: warning: zstandard not installed; writing raw (uncompressed) extents",
               file=sys.stderr)
@@ -399,6 +407,8 @@ def pack(
                             publisher=publisher)
     try:
         for (group_path, group), part in zip(groups, partials):
+            if cancel is not None and cancel():
+                raise CancelledError("pack cancelled")
             meta = app_metadata if any(p.kind == F.KIND_BASE for p in group) else {}
             _pack_container(
                 part,
@@ -408,6 +418,7 @@ def pack(
                 keep_listings=keep_listings,
                 progress=progress,
                 threads=threads,
+                cancel=cancel,
                 **meta,
             )
         # all groups built: publish them (all-or-nothing for --split too)
@@ -439,6 +450,7 @@ def _pack_container(
     roots: list[DirObj] | None = None,
     tree: Tree | None = None,
     threads: int = 0,
+    cancel: Callable[[], bool] | None = None,
 ) -> list[PackInput]:
     if os.path.exists(out_path):
         raise F.NupError(f"pack: refusing to overwrite {out_path}")
@@ -480,7 +492,7 @@ def _pack_container(
     try:
         with open(out_path, "wb") as out:
             out.write(b"\0" * blob_offset)  # placeholder for header + TOC
-            blob_cursor = _write_extents(out, tree, zc, blob_offset, progress)
+            blob_cursor = _write_extents(out, tree, zc, blob_offset, progress, cancel=cancel)
             dump_label = os.path.basename(os.path.normpath(src))
             meta_offsets, blob_cursor = _write_meta_blocks(out, packages, dump_label,
                                                            names, icons, display_version,

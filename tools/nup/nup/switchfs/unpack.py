@@ -588,14 +588,25 @@ def _get_base_romfs_reader(
         raise
 
 
+_WIN_RESERVED: Final = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+
 def _safe_resolve(dest: Path, rel: str) -> Path:
-    """Resolve `rel` relative to `dest`, guarding strictly against traversal."""
-    if not rel or rel.startswith(("/", "\\")) or ":" in rel:
+    """Resolve `rel` relative to `dest`, guarding strictly against traversal and Windows device names."""
+    if not rel or rel.startswith(("/", "\\")) or ":" in rel or "\0" in rel:
         raise UnpackError(f"unsafe file path in container: {rel!r}")
     normalized = rel.replace("\\", "/")
     parts = normalized.split("/")
-    if any(p in ("..", ".", "") or ":" in p for p in parts):
-        raise UnpackError(f"unsafe file path in container: {rel!r}")
+    for p in parts:
+        if p in ("..", ".", "") or ":" in p or "\0" in p:
+            raise UnpackError(f"unsafe file path in container: {rel!r}")
+        if os.name == "nt":
+            if p.split(".", 1)[0].upper() in _WIN_RESERVED or p != p.rstrip(" ."):
+                raise UnpackError(f"unsafe Windows device name or trailing space/dot in path: {rel!r}")
     target = dest.joinpath(*parts)
     try:
         target.resolve().relative_to(dest.resolve())

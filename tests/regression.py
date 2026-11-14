@@ -440,7 +440,7 @@ def build_romfs(files):
     total.extend(data_blob)
     return bytes(total)
 
-def build_nca(content_type, title_id, sec0_part, sec0_fs, sec0_data, sec1_part=None, sec1_fs=None, sec1_data=b""):
+def build_nca(content_type, title_id, sec0_part, sec0_fs, sec0_data, sec1_part=None, sec1_fs=None, sec1_data=b"", sec1_crypt=1):
     hdr = bytearray(0xC00)
     hdr[0x200:0x204] = b"NCA3"
     hdr[0x205] = content_type
@@ -465,7 +465,7 @@ def build_nca(content_type, title_id, sec0_part, sec0_fs, sec0_data, sec1_part=N
         struct.pack_into("<II", hdr, 0x250, s1_start, s1_start + s1_cnt)
         hdr[0x602] = sec1_part
         hdr[0x603] = sec1_fs
-        hdr[0x604] = 1
+        hdr[0x604] = sec1_crypt
         if sec1_part == 1 and sec1_fs == 2:
             struct.pack_into("<QQ", hdr, 0x608 + 0x38, 0, len(sec1_data))
         elif sec1_part == 0 and sec1_fs == 3:
@@ -1157,6 +1157,78 @@ with NupReader(patched_nup_out) as r_p:
     lg_fi = [i for i in range(r_p.file_count) if r_p.files[i][0] == b"large.bin"][0]
     check(r_p.hash_file(lg_fi) == hashlib.sha256(large_payload).digest(),
           "patched large file SHA-256 matches original")
+
+# ---------- Phase IV: Deep Binary Validation, Security & Streaming Checks ----------
+# 10. SEC-08: Windows reserved device names and trailing dots/spaces in _safe_resolve
+fake_dest_win = Path(os.path.join(work, "safe_unpack_win"))
+for win_evil in ["con.txt", "PRN", "aux.dat", "NUL", "COM1", "LPT9", "evil_folder./file.txt", "spaced "]:
+    try:
+        _safe_resolve(fake_dest_win, win_evil)
+        check(False, f"_safe_resolve rejects Windows reserved/invalid name: {win_evil}")
+    except UnpackError:
+        check(True, f"_safe_resolve rejects Windows reserved/invalid name: {win_evil}")
+
+# 11. SEC-08: Windows reserved device names in export._safe_export_path
+from nup.export import _safe_export_path
+for win_exp_evil in ["con", "prn.bin", "aux", "nul.romfs", "bad./file", "trailing "]:
+    try:
+        _safe_export_path(fake_dest_win, win_exp_evil)
+        check(False, f"_safe_export_path rejects Windows reserved name: {win_exp_evil}")
+    except F.NupError:
+        check(True, f"_safe_export_path rejects Windows reserved name: {win_exp_evil}")
+
+# 12. pack() works seamlessly with pathlib.Path instances for out_path and src
+path_obj_dir = Path(work) / "path_obj_test"
+(path_obj_dir / "romfs").mkdir(parents=True, exist_ok=True)
+(path_obj_dir / "romfs" / "test.txt").write_bytes(b"hello pathlib")
+path_obj_nup = Path(work) / "path_obj_out.nup"
+pack(path_obj_nup, path_obj_dir, level=1)
+check(path_obj_nup.is_file() and path_obj_nup.stat().st_size > 0,
+      "pack() handles pathlib.Path out_path and src without error")
+
+# 13. convert() raises UnpackError when BKTR RomFS update has no base game
+upd_tid = synth_tid + 0x800
+upd_exefs = build_pfs0([("main.npdm", npdm)])
+upd_prog_nca = build_nca(0, upd_tid, 1, 2, upd_exefs, 0, 3, b"\0" * 0x200, sec1_crypt=4)
+upd_cid = "44" * 16
+
+upd_cnmt_data = bytearray(0x20 + 8 + 0x38)
+struct.pack_into("<QIBBH", upd_cnmt_data, 0, upd_tid, 0x10000, 0x81, 0, 8)
+struct.pack_into("<H", upd_cnmt_data, 0x10, 1)
+struct.pack_into("<Q", upd_cnmt_data, 0x20, synth_tid)
+upd_cnmt_data[0x28 + 0x20:0x28 + 0x30] = bytes.fromhex(upd_cid)
+struct.pack_into("<I", upd_cnmt_data, 0x28 + 0x30, len(upd_prog_nca))
+upd_cnmt_data[0x28 + 0x36] = 1
+
+upd_meta_pfs0 = build_pfs0([("update.cnmt", bytes(upd_cnmt_data))])
+upd_meta_nca = build_nca(1, upd_tid, 1, 2, upd_meta_pfs0)
+
+synth_upd_bytes = build_pfs0([
+    (f"{upd_cid}.nca", upd_prog_nca),
+    ("update.cnmt.nca", upd_meta_nca),
+])
+isolated_sub = Path(work) / "isolated_arena" / "sub"
+isolated_sub.mkdir(parents=True, exist_ok=True)
+orphan_upd_nsp = isolated_sub / "orphan_update.nsp"
+orphan_upd_nsp.write_bytes(synth_upd_bytes)
+
+try:
+    convert(orphan_upd_nsp, Path(work) / "orphan_fail.nup")
+    check(False, "convert() without base for BKTR update should raise UnpackError")
+except UnpackError as ue:
+    check("update requires base game" in str(ue),
+          "convert() raises UnpackError when base game is missing for BKTR update", str(ue))
+
+# 14. Streaming NSP export verifies valid PFS0 container and NCA structure
+nsp_export_dir = Path(work) / "nsp_export_stream"
+exp_res = export_container(nup1, str(nsp_export_dir), fmt="nsp")
+check(exp_res.files_exported >= 1, "export_container(..., fmt='nsp') exported files")
+exported_nsps = list(nsp_export_dir.glob("*.nsp"))
+check(len(exported_nsps) > 0, "exported .nsp file exists on disk")
+if exported_nsps:
+    with open(exported_nsps[0], "rb") as nsp_fh:
+        nsp_header = nsp_fh.read(0x10)
+        check(nsp_header.startswith(b"PFS0"), "exported streaming NSP has valid PFS0 magic")
 
 # ---------- summary ----------
 print()
