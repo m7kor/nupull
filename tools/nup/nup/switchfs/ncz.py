@@ -173,12 +173,18 @@ def _decompress_solid(
             data = reader.read(_CHUNK)
             if not data:
                 break
+            chunk_len = len(data)
+            if chunk_len < 0:
+                raise UnpackError("invalid negative chunk length")
+            if total + chunk_len > max_size:
+                raise UnpackError(
+                    f"solid NCZ stream exceeds maximum allowed size "
+                    f"({total + chunk_len} > {max_size})"
+                )
             out.write(data)
-            total += len(data)
-            if total > max_size:
-                raise UnpackError(f"solid NCZ stream exceeds maximum allowed size ({total} > {max_size})")
+            total += chunk_len
             if on_progress is not None:
-                on_progress(len(data))
+                on_progress(chunk_len)
     finally:
         reader.close()  # type: ignore[no-untyped-call]
     return total

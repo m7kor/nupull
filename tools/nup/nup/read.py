@@ -383,3 +383,53 @@ class NupReader:
                 reader.close()  # type: ignore[no-untyped-call]
         else:
             raise F.NupError(f"unknown codec {codec}")
+
+    def hash_file(self, file_index: int, chunk_size: int = 1024 * 1024) -> bytes:
+        """Stream an uncompressed or decompressed file through SHA-256 with bounded memory."""
+        hasher = hashlib.sha256()
+        name, size, sha, eoff, esz, codec = self.files[file_index]
+        if size == 0:
+            return hasher.digest()
+        if eoff < 0 or esz < 0 or eoff + esz > len(self._mm):
+            raise F.NupError(f"extent [{eoff}:{eoff + esz}] out of bounds for {name!r}")
+
+        if codec == F.CODEC_RAW:
+            if esz != size:
+                raise F.NupError(f"raw extent size mismatch for {name!r}: {esz} != {size}")
+            cur = eoff
+            end = eoff + esz
+            written = 0
+            while cur < end:
+                step = min(chunk_size, end - cur)
+                hasher.update(self._mm[cur : cur + step])
+                cur += step
+                written += step
+            if written != size:
+                raise F.NupError(f"size mismatch for {name!r}: {written} != {size}")
+        elif codec == F.CODEC_ZSTD:
+            import zstandard
+
+            dctx = zstandard.ZstdDecompressor()
+            bmr = BoundedMmapReader(
+                self._mm, eoff, esz, chunk_size=min(chunk_size, 65536)
+            )
+            reader = dctx.stream_reader(cast(IO[bytes], bmr))
+            try:
+                written = 0
+                while True:
+                    chunk = reader.read(chunk_size)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > size:
+                        raise F.NupError(
+                            f"decompressed data exceeds declared size for {name!r}"
+                        )
+                    hasher.update(chunk)
+                if written != size:
+                    raise F.NupError(f"size mismatch for {name!r}: {written} != {size}")
+            finally:
+                reader.close()  # type: ignore[no-untyped-call]
+        else:
+            raise F.NupError(f"unknown codec {codec}")
+        return hasher.digest()

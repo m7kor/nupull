@@ -1108,6 +1108,56 @@ for evil_path in ["/etc/passwd", "\\windows\\system32", "../outside.txt", "C:/dr
     except UnpackError:
         check(True, f"_safe_resolve rejects {evil_path}")
 
+# ---------- Phase III: Deep Memory, Streaming & Security Checks ----------
+# 7. NupReader.hash_file() matches read_file() SHA-256 for all files
+with NupReader(nup1) as r:
+    for fi in range(r.file_count):
+        expected_hash = hashlib.sha256(r.read_file(fi)).digest()
+        stream_hash = r.hash_file(fi)
+        check(stream_hash == expected_hash, f"hash_file() matches read_file() for file {fi}")
+
+# 8. Prospective solid decompression size check (SEC-07)
+import zstandard
+from nup.switchfs.ncz import _decompress_solid
+cctx_s = zstandard.ZstdCompressor(level=1)
+comp_data_s = cctx_s.compress(b"A" * 10000)
+fake_bio_s = io.BytesIO()
+try:
+    _decompress_solid(lambda off, sz: comp_data_s[off:off + sz], 0,
+                      out=fake_bio_s, on_progress=None, check=lambda: None, max_size=2000)
+    check(False, "solid bomb exceeding max_size rejected prospectively")
+except UnpackError as e:
+    check(len(fake_bio_s.getvalue()) == 0,
+          "solid bomb rejected without writing any bytes exceeding max_size", str(e))
+
+# 9. patch.py StreamingZstdReader with large payload (> 16 MiB)
+large_test_dir = os.path.join(work, "large_patch_test")
+os.makedirs(os.path.join(large_test_dir, "exefs"), exist_ok=True)
+os.makedirs(os.path.join(large_test_dir, "romfs"), exist_ok=True)
+open(os.path.join(large_test_dir, "exefs", "main"), "wb").write(b"NSO0" + b"\0" * 0x3C + b"\x22" * 0x20)
+npdm_lg = bytearray(b"\0" * 0x40)
+npdm_lg[0:4] = b"ACI0"
+struct.pack_into("<Q", npdm_lg, 0x10, 0x0100AAAABBBB0002)
+open(os.path.join(large_test_dir, "exefs", "main.npdm"), "wb").write(bytes(npdm_lg))
+large_payload = (b"STREAM_PATCH_LARGE_DATA_TEST_" * 32) * (18 * 1024)  # ~17.5 MB
+open(os.path.join(large_test_dir, "romfs", "large.bin"), "wb").write(large_payload)
+large_nup_base = os.path.join(work, "large_base.nup")
+pack(large_nup_base, large_test_dir, level=1)
+
+# Now test patch with a small mod file alongside the untouched large file (> 16 MiB)
+mod_test_dir = os.path.join(work, "mod_patch_dir")
+os.makedirs(os.path.join(mod_test_dir, "romfs"), exist_ok=True)
+open(os.path.join(mod_test_dir, "romfs", "added.txt"), "wb").write(b"NEW_MOD_FILE_CONTENT")
+patched_nup_out = os.path.join(work, "large_patched.nup")
+patch_res = patch(large_nup_base, mod_test_dir, patched_nup_out, level=1)
+untouched_count = patch_res.total_files - (patch_res.files_replaced + patch_res.files_added)
+check(untouched_count >= 1, "patch() streamed untouched large file (> 16 MiB)")
+
+with NupReader(patched_nup_out) as r_p:
+    lg_fi = [i for i in range(r_p.file_count) if r_p.files[i][0] == b"large.bin"][0]
+    check(r_p.hash_file(lg_fi) == hashlib.sha256(large_payload).digest(),
+          "patched large file SHA-256 matches original")
+
 # ---------- summary ----------
 print()
 if fails:

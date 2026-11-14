@@ -15,14 +15,15 @@ from pathlib import Path
 import shutil
 import struct
 import time
-from typing import Callable, Final, IO
+from typing import Callable, Final, IO, cast
+import zstandard
 
 from . import format as F
 from . import meta as M
 from .access import app_meta, iter_children, localized_icons, localized_titles
 from .discover import DirObj, FileObj, PackInput, Tree, build_virtual_tree
 from .pack import pack_virtual
-from .read import NupReader, PackageInfo
+from .read import BoundedMmapReader, NupReader, PackageInfo
 from .switchfs.errors import CancelledError, UnpackError
 from .switchfs.unpack import Progress
 from .verify import verify
@@ -189,19 +190,62 @@ def _make_nup_reader(
         return lambda pos, n: b""
     if codec == F.CODEC_RAW:
         return lambda pos, n: r._mm[eoff + pos : eoff + pos + min(n, max(0, size - pos))]
-    # ZSTD
-    buf_box: list[bytes | None] = [None]
+    # ZSTD: use fast memory cache for small files, and streaming reader for large files
+    if size <= 16 * 1024 * 1024:
+        buf_box: list[bytes | None] = [None]
 
-    def read_at(pos: int, n: int) -> bytes:
-        if n <= 0 or pos >= size:
-            return b""
-        if buf_box[0] is None:
-            buf_box[0] = r.read_file(file_index)
-        data = buf_box[0]
-        assert data is not None
-        return data[pos : pos + min(n, size - pos)]
+        def read_at_cached(pos: int, n: int) -> bytes:
+            if n <= 0 or pos >= size:
+                return b""
+            if buf_box[0] is None:
+                buf_box[0] = r.read_file(file_index)
+            data = buf_box[0]
+            assert data is not None
+            return data[pos : pos + min(n, size - pos)]
 
-    return read_at
+        return read_at_cached
+
+    class StreamingZstdReader:
+        def __init__(self) -> None:
+            self._reader: IO[bytes] | None = None
+            self._bmr: BoundedMmapReader | None = None
+            self._pos = 0
+
+        def _reset(self) -> None:
+            if self._reader is not None:
+                try:
+                    self._reader.close()
+                except Exception:
+                    pass
+            dctx = zstandard.ZstdDecompressor()
+            self._bmr = BoundedMmapReader(r._mm, eoff, esz, chunk_size=65536)
+            self._reader = cast(IO[bytes], dctx.stream_reader(cast(IO[bytes], self._bmr)))
+            self._pos = 0
+
+        def read_at_stream(self, pos: int, n: int) -> bytes:
+            if n <= 0 or pos >= size:
+                return b""
+            if self._reader is None or pos < self._pos:
+                self._reset()
+            assert self._reader is not None
+            while self._pos < pos:
+                skip_len = min(65536, pos - self._pos)
+                skipped = self._reader.read(skip_len)
+                if not skipped:
+                    return b""
+                self._pos += len(skipped)
+            buf = bytearray()
+            while len(buf) < n and self._pos < size:
+                step = min(65536, n - len(buf))
+                chunk = self._reader.read(step)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                self._pos += len(chunk)
+            return bytes(buf)
+
+    streamer = StreamingZstdReader()
+    return streamer.read_at_stream
 
 
 def _make_disk_reader(path: Path, open_handles: list[IO[bytes]]) -> Callable[[int, int], bytes]:

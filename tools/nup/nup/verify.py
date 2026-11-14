@@ -89,7 +89,7 @@ def verify(
                 if progress:
                     progress(fi, total, bytes_done)
                 try:
-                    data = r.read_file(fi)
+                    computed_sha = r.hash_file(fi)
                 except F.NupError as e:
                     fail(f"file {fi} ({name!r}): read failed: {e}")
                     bytes_done += size
@@ -100,7 +100,7 @@ def verify(
                     fail(f"file {fi} ({name!r}): read failed: {type(e).__name__}: {e}")
                     bytes_done += size
                     continue
-                if hashlib.sha256(data).digest() != sha:
+                if computed_sha != sha:
                     fail(f"file {fi} ({name!r}): SHA-256 mismatch")
                 if codec == F.CODEC_RAW and esz != size:
                     fail(f"file {fi} ({name!r}): raw extent size {esz} != {size}")
