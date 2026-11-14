@@ -10,10 +10,12 @@ from typing import Any
 
 from . import __version__
 
+import importlib
+
 try:
-    from . import _build_meta  # type: ignore
-    _EMBEDDED_COMMIT: str | None = getattr(_build_meta, "COMMIT", None)
-except ImportError:
+    _meta = importlib.import_module("._build_meta", package=__package__)
+    _EMBEDDED_COMMIT: str | None = getattr(_meta, "COMMIT", None)
+except Exception:
     _EMBEDDED_COMMIT = None
 
 # Baked fallback commit SHA when running without git and without embedded metadata

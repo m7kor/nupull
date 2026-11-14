@@ -604,9 +604,8 @@ def _safe_resolve(dest: Path, rel: str) -> Path:
     for p in parts:
         if p in ("..", ".", "") or ":" in p or "\0" in p:
             raise UnpackError(f"unsafe file path in container: {rel!r}")
-        if os.name == "nt":
-            if p.split(".", 1)[0].upper() in _WIN_RESERVED or p != p.rstrip(" ."):
-                raise UnpackError(f"unsafe Windows device name or trailing space/dot in path: {rel!r}")
+        if p.split(".", 1)[0].upper() in _WIN_RESERVED or p != p.rstrip(" ."):
+            raise UnpackError(f"unsafe Windows device name or trailing space/dot in path: {rel!r}")
     target = dest.joinpath(*parts)
     try:
         target.resolve().relative_to(dest.resolve())

@@ -110,7 +110,7 @@ jobs:
     environment:
       name: production-release
     # Critical publication protection: Tag push alone NEVER publishes; explicit workflow_dispatch authorization required
-    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
     permissions:
       contents: write
 
@@ -125,14 +125,14 @@ jobs:
           echo "Processing Tag: $TAG"
 
           # 1. Verify approved tag matches workflow input
-          EXPECTED_INPUT_TAG="${{ inputs.expected_tag }}"
+          EXPECTED_INPUT_TAG="${{ github.event.inputs.expected_tag }}"
           if [ -n "$EXPECTED_INPUT_TAG" ] && [ "$TAG" != "$EXPECTED_INPUT_TAG" ]; then
             echo "::error::Target Tag '$TAG' does not match explicitly approved input tag '$EXPECTED_INPUT_TAG'"
             exit 1
           fi
 
           # 2. Verify approved commit SHA
-          EXPECTED_INPUT_COMMIT="${{ inputs.expected_commit }}"
+          EXPECTED_INPUT_COMMIT="${{ github.event.inputs.expected_commit }}"
           ACTUAL_COMMIT="${GITHUB_SHA}"
           if [ -n "$EXPECTED_INPUT_COMMIT" ] && [ "$ACTUAL_COMMIT" != "$EXPECTED_INPUT_COMMIT" ]; then
             echo "::error::Current commit '$ACTUAL_COMMIT' does not match explicitly approved commit '$EXPECTED_INPUT_COMMIT'"
@@ -155,7 +155,7 @@ jobs:
               echo "::error::Tag '$TAG' does not match source package version '$EXPECTED_TAG'"
               exit 1
             fi
-            if [ "${{ inputs.force_prerelease }}" == "true" ]; then
+            if [ "${{ github.event.inputs.force_prerelease }}" == "true" ]; then
               echo "Classification: STABLE TAG FORCED TO PRE-RELEASE"
               echo "prerelease=true" >> $GITHUB_OUTPUT
               echo "make_latest=false" >> $GITHUB_OUTPUT

@@ -52,9 +52,8 @@ def _safe_export_path(base_dir: Path, rel: str) -> Path:
     for p in parts:
         if p in ("..", ".", "") or ":" in p or "\0" in p:
             raise F.NupError(f"export: unsafe file path in container: {rel!r}")
-        if os.name == "nt":
-            if p.split(".", 1)[0].upper() in _WIN_RESERVED or p != p.rstrip(" ."):
-                raise F.NupError(f"export: unsafe Windows device name or trailing space/dot in path: {rel!r}")
+        if p.split(".", 1)[0].upper() in _WIN_RESERVED or p != p.rstrip(" ."):
+            raise F.NupError(f"export: unsafe Windows device name or trailing space/dot in path: {rel!r}")
     target = base_dir.joinpath(*parts)
     try:
         target.resolve().relative_to(base_dir.resolve())
